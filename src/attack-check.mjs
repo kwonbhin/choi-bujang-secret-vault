@@ -129,5 +129,49 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 4건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
+  if (config.step === 4) {
+    const list = await get(app, '/api/notes');
+    const forged = await get(app, '/api/notes', {
+      headers: { Authorization: `Bearer ${forgedToken(config)}` },
+    });
+    const page = await get(app, '/');
+    const pageText = page.ok ? await page.clone().text() : '';
+    const leaked = await keyLeak([page, list, forged]);
+    // anon 점검에는 배포된 화면이 실제로 쓰는 공개용 publishable key만 씁니다.
+    const publishable = /SUPABASE_PUBLISHABLE_KEY\s*=\s*'(sb_publishable_[A-Za-z0-9_-]+)'/u.exec(pageText)?.[1];
+    let dataRead = '화면에서 publishable key를 찾지 못해 미실행';
+    let dataInsert = dataRead;
+    if (publishable) {
+      const rest = new URL('/rest/v1/vault_notes', new URL(config.identityProvider.issuer).origin);
+      const anonHeaders = { apikey: publishable };
+      const read = await fetch(`${rest}?select=id&limit=1`, {
+        headers: anonHeaders, redirect: 'error', signal: AbortSignal.timeout(10000),
+      });
+      const insert = await fetch(rest, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+        headers: { ...anonHeaders, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ title: 'anon check', content: 'x' }),
+      });
+      const dataApi = async response => {
+        const code = await response.clone().json().then(data => data?.code, () => null);
+        const rows = await response.clone().json().then(data => (Array.isArray(data) ? data.length : 0), () => 0);
+        return `HTTP ${response.status}, 코드 ${typeof code === 'string' ? code.slice(0, 20) : '없음'}, 행 ${rows}개`;
+      };
+      dataRead = `anon 키로 Data API GET vault_notes: ${await dataApi(read)}`;
+      dataInsert = `anon 키로 Data API POST vault_notes: ${await dataApi(insert)}`;
+    }
+    return [
+      { attackId: 'anonymous_api_list', expected: '로그인 없이 GET /api/notes는 401 JSON으로 거부되고 메모 없음',
+        observed: `로그인 없이 GET /api/notes: ${await describe(list)}` },
+      { attackId: 'forged_token_read', expected: '서명이 없는 가짜 토큰으로 GET /api/notes는 401 JSON으로 거부됨',
+        observed: `가짜 토큰으로 GET /api/notes: ${await describe(forged)}` },
+      { attackId: 'anon_data_api_read', expected: 'anon(publishable) 키로 Data API의 vault_notes 읽기가 권한 없음(42501)으로 거부됨',
+        observed: dataRead },
+      { attackId: 'anon_data_api_insert', expected: 'anon(publishable) 키로 Data API의 vault_notes 쓰기가 권한 없음(42501)으로 거부됨',
+        observed: dataInsert },
+      { attackId: 'server_key_exposure', expected: '화면과 /api/notes 응답에 서버 전용 키 형태가 없음',
+        observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
+    ];
+  }
   throw new Error('이 단계의 공격 점검을 src/attack-check.mjs에 구현해 주세요.');
 }
