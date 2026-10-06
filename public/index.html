@@ -16,7 +16,18 @@
     li { border: 1px solid #51667c; border-radius: 14px; padding: 17px 19px; background: #1a2a3d; }
     strong { display: block; font-size: 18px; margin-bottom: 5px; }
     li span { color: #bfd0e5; }
+    .auth { margin: 26px 0; padding: 18px; border: 1px solid #51667c; border-radius: 14px; background: #1a2a3d; }
+    .auth form { display: grid; gap: 10px; }
+    .auth label { display: grid; gap: 4px; font-size: 15px; color: #bfd0e5; }
+    .auth input { font: inherit; padding: 10px 12px; border: 1px solid #51667c; border-radius: 10px; background: #101a28; color: #ecf4ff; }
+    .auth button { font: inherit; font-weight: 700; padding: 10px 14px; border: 0; border-radius: 10px; background: #8ad8df; color: #101a28; cursor: pointer; justify-self: start; }
+    .auth button:disabled { opacity: .6; cursor: wait; }
+    .auth-error { margin: 10px 0 0; color: #ffb4c0; }
+    .auth-status { margin: 0 0 10px; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
+    integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok"
+    crossorigin="anonymous"></script>
 </head>
 <body>
   <main>
@@ -24,8 +35,88 @@
     <h1>점령된 자료실</h1>
     <p>지금은 보호 장치가 없는 상태입니다. 아래 기록은 모두 실습을 위해 만든 가상 자료입니다.</p>
     <div class="notice">로그인하지 않은 방문자도 자료를 볼 수 있습니다. 공개 범위를 확인하고, 다음 제작 단계에서 접근을 차례로 막아 주세요.</div>
+    <section class="auth" aria-labelledby="auth-title">
+      <h2 id="auth-title">로그인</h2>
+      <form id="login-form" hidden>
+        <label>이메일 <input id="login-email" type="email" autocomplete="username" required></label>
+        <label>비밀번호 <input id="login-password" type="password" autocomplete="current-password" required></label>
+        <button id="login-button" type="submit">로그인</button>
+      </form>
+      <div id="signed-in" hidden>
+        <p class="auth-status" id="auth-status"></p>
+        <button id="logout-button" type="button">로그아웃</button>
+      </div>
+      <p class="auth-error" id="auth-error" role="alert" hidden></p>
+    </section>
     <ul id="notes" aria-live="polite"><li>가상 자료를 불러오는 중입니다.</li></ul>
   </main>
+  <script type="module">
+    // 공개용 값만 둡니다. 서버 전용 키(sb_secret_…)는 절대 이 파일에 넣지 마세요.
+    const SUPABASE_URL = 'https://cywkylybleiyhzupizbt.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_XjCZgbbbeaSPdSedvGq9Qg_eZHS9qJf';
+
+    const form = document.querySelector('#login-form');
+    const emailInput = document.querySelector('#login-email');
+    const passwordInput = document.querySelector('#login-password');
+    const loginButton = document.querySelector('#login-button');
+    const signedIn = document.querySelector('#signed-in');
+    const authStatus = document.querySelector('#auth-status');
+    const logoutButton = document.querySelector('#logout-button');
+    const authError = document.querySelector('#auth-error');
+
+    const showError = message => {
+      authError.textContent = message;
+      authError.hidden = !message;
+    };
+    const loginErrorMessage = error => {
+      const reasons = {
+        invalid_credentials: '이메일 또는 비밀번호가 맞지 않습니다.',
+        email_not_confirmed: '이메일 인증이 끝나지 않은 계정입니다.',
+        user_banned: '사용이 정지된 계정입니다.',
+        over_request_rate_limit: '로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요.',
+      };
+      if (error.status === 0 || error.name === 'AuthRetryableFetchError') {
+        return '로그인 서버에 연결하지 못했습니다. 네트워크를 확인하세요.';
+      }
+      return `로그인 실패: ${reasons[error.code] ?? error.message}`;
+    };
+    const render = session => {
+      form.hidden = Boolean(session);
+      signedIn.hidden = !session;
+      authStatus.textContent = session ? `${session.user.email} 계정으로 로그인했습니다.` : '';
+    };
+
+    if (!SUPABASE_PUBLISHABLE_KEY || !window.supabase) {
+      showError(!window.supabase ? '로그인 도구(supabase-js)를 불러오지 못했습니다.'
+        : '로그인 설정이 끝나지 않았습니다. 공개용 publishable key를 넣어 주세요.');
+    } else {
+      const auth = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY).auth;
+      auth.onAuthStateChange((_event, session) => render(session));
+      const { data } = await auth.getSession();
+      render(data.session);
+
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        showError('');
+        loginButton.disabled = true;
+        const { error } = await auth.signInWithPassword({
+          email: emailInput.value.trim(),
+          password: passwordInput.value,
+        });
+        passwordInput.value = '';
+        loginButton.disabled = false;
+        if (error) showError(loginErrorMessage(error));
+      });
+
+      logoutButton.addEventListener('click', async () => {
+        showError('');
+        logoutButton.disabled = true;
+        const { error } = await auth.signOut();
+        logoutButton.disabled = false;
+        if (error) showError(`로그아웃 실패: ${error.message}`);
+      });
+    }
+  </script>
   <script type="module">
     const list = document.querySelector('#notes');
     try {
