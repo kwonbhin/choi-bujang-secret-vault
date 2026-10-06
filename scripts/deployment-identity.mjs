@@ -32,7 +32,7 @@ export function deploymentIdentity(env, config) {
 
 const ROUTE = /^(?:GET|POST|PUT|PATCH|DELETE) \/[A-Za-z0-9/_:.-]{0,200}$/u;
 
-// 3단계부터의 허용 경로와 5단계부터의 원본 API 주소를 심판이 /aleph.json에서 읽도록 옮깁니다.
+// 3단계부터의 허용 경로·로그인 발급자와 5단계부터의 원본 API 주소를 심판이 /aleph.json에서 읽도록 옮깁니다.
 // 설정에 없으면 넣지 않고, 형식이 틀리면 빈 값을 내보내지 않도록 빌드를 멈춥니다. 비밀값은 다루지 않습니다.
 function stageFields(config) {
   const fields = {};
@@ -42,6 +42,21 @@ function stageFields(config) {
       throw new Error('aleph.config.json의 allowedRoutes는 "GET /api/notes" 같은 경로 문자열 배열이어야 합니다.');
     }
     fields.allowedRoutes = [...config.allowedRoutes];
+  }
+  if (config.identityProvider !== undefined && config.identityProvider !== null) {
+    const provider = config.identityProvider;
+    const https = value => {
+      try { return new URL(value).protocol === 'https:'; } catch { return false; }
+    };
+    if (typeof provider !== 'object' || Array.isArray(provider)
+        || !https(provider.issuer) || !https(provider.jwksUrl)
+        || typeof provider.audience !== 'string' || !/^[a-zA-Z0-9._:-]{1,120}$/u.test(provider.audience)) {
+      throw new Error('aleph.config.json의 identityProvider에 https issuer·jwksUrl과 audience가 필요합니다.');
+    }
+    // 공개 정보인 세 항목만 그대로 옮깁니다. 다른 항목은 내보내지 않습니다.
+    fields.identityProvider = {
+      issuer: provider.issuer, audience: provider.audience, jwksUrl: provider.jwksUrl,
+    };
   }
   if (config.originalApiUrl !== undefined && config.originalApiUrl !== null) {
     let url;
