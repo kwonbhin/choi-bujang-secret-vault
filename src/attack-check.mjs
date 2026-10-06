@@ -174,5 +174,62 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
+  if (config.step === 5) {
+    const list = await get(app, '/api/notes');
+    const forged = await get(app, '/api/notes', {
+      headers: { Authorization: `Bearer ${forgedToken(config)}` },
+    });
+    // 화면과 공개 파일에 공개 키·서버 전용 키 접두어·시드 메모 문장이 있는지 셉니다(값은 기록하지 않음).
+    // 시드 메모 문장은 이 파일이 README의 저장소 검색에 걸리지 않도록 유니코드 이스케이프로 적습니다.
+    const SEED_SENTENCE = /\uC2E4\uC2B5\uC6A9 \uAC00\uC0C1/gu;
+    const publicPaths = ['/', '/index.html', '/aleph.json', '/data.json'];
+    const counts = { publishable: 0, secret: 0, seed: 0 };
+    const statuses = [];
+    for (const path of publicPaths) {
+      const response = await get(app, path);
+      const text = await response.text().catch(() => '');
+      statuses.push(`${path} ${response.status}`);
+      counts.publishable += text.match(/sb_publishable_/gu)?.length ?? 0;
+      counts.secret += text.match(/sb_secret_/gu)?.length ?? 0;
+      counts.seed += text.match(SEED_SENTENCE)?.length ?? 0;
+    }
+    // anon 키는 bundle을 실행하는 명령의 환경변수로만 받습니다. 파일에 저장하지 않습니다.
+    const publishable = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    let dataRead = '실행 명령에 SUPABASE_PUBLISHABLE_KEY 환경변수가 없어 미실행';
+    let dataInsert = dataRead;
+    if (publishable && config.originalApiUrl) {
+      const original = new URL(config.originalApiUrl);
+      const read = await fetch(original, {
+        headers: { apikey: publishable }, redirect: 'error', signal: AbortSignal.timeout(10000),
+      });
+      const insert = await fetch(original, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+        headers: { apikey: publishable, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ title: 'anon check', content: 'x' }),
+      });
+      const dataApi = async response => {
+        const data = await response.clone().json().catch(() => null);
+        const code = typeof data?.code === 'string' ? data.code.slice(0, 20) : '없음';
+        return `HTTP ${response.status}, 코드 ${code}, 행 ${Array.isArray(data) ? data.length : 0}개`;
+      };
+      dataRead = `anon 키로 originalApiUrl GET: ${await dataApi(read)}`;
+      dataInsert = `anon 키로 originalApiUrl POST: ${await dataApi(insert)}`;
+    } else if (publishable) {
+      dataRead = 'aleph.config.json에 originalApiUrl이 없어 미실행';
+      dataInsert = dataRead;
+    }
+    return [
+      { attackId: 'anonymous_api_list', expected: '로그인 없이 GET /api/notes는 401 JSON으로 거부되고 메모 없음',
+        observed: `로그인 없이 GET /api/notes: ${await describe(list)}` },
+      { attackId: 'forged_token_read', expected: '서명이 없는 가짜 토큰으로 GET /api/notes는 401 JSON으로 거부됨',
+        observed: `가짜 토큰으로 GET /api/notes: ${await describe(forged)}` },
+      { attackId: 'public_files_key_scan', expected: '화면과 공개 파일에 sb_publishable_·sb_secret_·시드 메모 문장이 0건',
+        observed: `${statuses.join(', ')} 검사: sb_publishable_ ${counts.publishable}건, sb_secret_ ${counts.secret}건, 시드 메모 문장 ${counts.seed}건` },
+      { attackId: 'anon_original_api_read', expected: 'anon 키로 originalApiUrl 읽기가 권한 없음(42501)으로 거부됨',
+        observed: dataRead },
+      { attackId: 'anon_original_api_insert', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
+        observed: dataInsert },
+    ];
+  }
   throw new Error('이 단계의 공격 점검을 src/attack-check.mjs에 구현해 주세요.');
 }
