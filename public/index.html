@@ -24,6 +24,12 @@
     .auth button:disabled { opacity: .6; cursor: wait; }
     .auth-error { margin: 10px 0 0; color: #ffb4c0; }
     .auth-status { margin: 0 0 10px; }
+    .auth textarea { font: inherit; min-height: 90px; padding: 10px 12px; border: 1px solid #51667c; border-radius: 10px; background: #101a28; color: #ecf4ff; resize: vertical; }
+    .auth .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .auth button.secondary, li button { background: transparent; color: #8ad8df; border: 1px solid #8ad8df; }
+    li span { display: block; white-space: pre-wrap; }
+    li .actions { display: flex; gap: 8px; margin-top: 10px; }
+    li button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
     [hidden] { display: none !important; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
@@ -49,6 +55,18 @@
       </div>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
     </section>
+    <section class="auth" id="editor" aria-labelledby="editor-title" hidden>
+      <h2 id="editor-title">가상 메모 추가</h2>
+      <form id="note-form">
+        <label>제목 <input id="note-title" maxlength="200" required></label>
+        <label>내용 <textarea id="note-body" maxlength="10000"></textarea></label>
+        <div class="actions">
+          <button id="note-save" type="submit">추가</button>
+          <button id="note-cancel" class="secondary" type="button" hidden>수정 취소</button>
+        </div>
+      </form>
+      <p class="auth-error" id="note-error" role="alert" hidden></p>
+    </section>
     <ul id="notes" aria-live="polite"><li>가상 자료를 불러오는 중입니다.</li></ul>
   </main>
   <script type="module">
@@ -65,47 +83,135 @@
     const logoutButton = document.querySelector('#logout-button');
     const authError = document.querySelector('#auth-error');
     const list = document.querySelector('#notes');
+    const editor = document.querySelector('#editor');
+    const editorTitle = document.querySelector('#editor-title');
+    const noteForm = document.querySelector('#note-form');
+    const noteTitle = document.querySelector('#note-title');
+    const noteBody = document.querySelector('#note-body');
+    const noteSave = document.querySelector('#note-save');
+    const noteCancel = document.querySelector('#note-cancel');
+    const noteError = document.querySelector('#note-error');
+
+    // 토큰이 갱신돼도 최신 세션을 쓰도록 onAuthStateChange에서 계속 바꿉니다.
+    let currentSession = null;
+    let editingId = null;
 
     const showListMessage = message => {
       const item = document.createElement('li');
       item.textContent = message;
       list.replaceChildren(item);
     };
+    const showNoteError = message => {
+      noteError.textContent = message;
+      noteError.hidden = !message;
+    };
+    const api = async (path, { method = 'GET', body } = {}) => {
+      if (!currentSession) throw new Error('로그인하면 자료가 보입니다.');
+      const headers = { Authorization: `Bearer ${currentSession.access_token}` };
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const response = await fetch(path, {
+        method, cache: 'no-store', headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('로그인을 확인하지 못했습니다. 다시 로그인해 주세요.');
+      }
+      const data = await response.json().catch(() => null);
+      if (response.status === 404) throw new Error('메모를 찾지 못했습니다. 이미 지워졌을 수 있습니다.');
+      if (response.status === 400) throw new Error('제목은 1~200자, 내용은 10000자 이하로 적어 주세요.');
+      if (!response.ok) throw new Error(`요청을 처리하지 못했습니다. (${data?.error ?? response.status})`);
+      return data;
+    };
+    const resetEditor = () => {
+      editingId = null;
+      noteForm.reset();
+      editorTitle.textContent = '가상 메모 추가';
+      noteSave.textContent = '추가';
+      noteCancel.hidden = true;
+    };
+    const startEdit = note => {
+      editingId = note.id;
+      noteTitle.value = note.title;
+      noteBody.value = note.body;
+      editorTitle.textContent = '가상 메모 수정';
+      noteSave.textContent = '저장';
+      noteCancel.hidden = false;
+      showNoteError('');
+      noteTitle.focus();
+    };
+    const noteItem = note => {
+      const item = document.createElement('li');
+      const title = document.createElement('strong');
+      const body = document.createElement('span');
+      const actions = document.createElement('div');
+      const edit = document.createElement('button');
+      const remove = document.createElement('button');
+      title.textContent = note.title;
+      body.textContent = note.body;
+      actions.className = 'actions';
+      edit.type = remove.type = 'button';
+      edit.textContent = '수정';
+      remove.textContent = '삭제';
+      edit.addEventListener('click', () => startEdit(note));
+      remove.addEventListener('click', async () => {
+        showNoteError('');
+        remove.disabled = true;
+        try {
+          await api(`/api/notes/${encodeURIComponent(note.id)}`, { method: 'DELETE' });
+          if (editingId === note.id) resetEditor();
+          await loadNotes();
+        } catch (error) {
+          remove.disabled = false;
+          showNoteError(`삭제 실패: ${error.message}`);
+        }
+      });
+      actions.append(edit, remove);
+      item.append(title, body, actions);
+      return item;
+    };
     // 로그인·로그아웃이 겹치면 마지막 요청의 결과만 화면에 씁니다.
     let notesRequest = 0;
-    const loadNotes = async session => {
+    const loadNotes = async () => {
       const current = ++notesRequest;
-      if (!session) {
+      editor.hidden = !currentSession;
+      if (!currentSession) {
+        resetEditor();
+        showNoteError('');
         showListMessage('로그인하면 자료가 보입니다.');
         return;
       }
       showListMessage('가상 자료를 불러오는 중입니다.');
       try {
-        const response = await fetch('/api/notes', {
-          cache: 'no-store',
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const notes = await api('/api/notes');
         if (current !== notesRequest) return;
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('로그인을 확인하지 못했습니다. 다시 로그인해 주세요.');
-        }
-        if (!response.ok) throw new Error('자료 함수를 읽을 수 없습니다.');
-        const data = await response.json();
-        if (current !== notesRequest) return;
-        if (!Array.isArray(data.notes)) throw new Error('자료 형식이 맞지 않습니다.');
-        list.replaceChildren(...data.notes.map(note => {
-          const item = document.createElement('li');
-          const title = document.createElement('strong');
-          const content = document.createElement('span');
-          title.textContent = note.title;
-          content.textContent = note.content;
-          item.append(title, content);
-          return item;
-        }));
+        if (!Array.isArray(notes)) throw new Error('자료 형식이 맞지 않습니다.');
+        if (!notes.length) showListMessage('아직 이 계정의 메모가 없습니다. 위에서 추가해 보세요.');
+        else list.replaceChildren(...notes.map(noteItem));
       } catch (error) {
         if (current === notesRequest) showListMessage(error.message);
       }
     };
+
+    noteForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      showNoteError('');
+      noteSave.disabled = true;
+      const note = { title: noteTitle.value, body: noteBody.value };
+      try {
+        if (editingId) await api(`/api/notes/${encodeURIComponent(editingId)}`, { method: 'PUT', body: note });
+        else await api('/api/notes', { method: 'POST', body: note });
+        resetEditor();
+        await loadNotes();
+      } catch (error) {
+        showNoteError(`${editingId ? '수정' : '추가'} 실패: ${error.message}`);
+      } finally {
+        noteSave.disabled = false;
+      }
+    });
+    noteCancel.addEventListener('click', () => {
+      resetEditor();
+      showNoteError('');
+    });
 
     const showError = message => {
       authError.textContent = message;
@@ -138,9 +244,10 @@
       // 처음 열 때(INITIAL_SESSION)·로그인·로그아웃마다 화면과 메모 목록을 다시 맞춥니다.
       // 토큰 갱신(TOKEN_REFRESHED)은 목록을 다시 부르지 않습니다.
       auth.onAuthStateChange((event, session) => {
+        currentSession = session;
         render(session);
         if (event !== 'TOKEN_REFRESHED' && event !== 'USER_UPDATED') {
-          setTimeout(() => loadNotes(session), 0);
+          setTimeout(() => loadNotes(), 0);
         }
       });
 
