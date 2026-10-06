@@ -32,9 +32,6 @@
     li button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
     [hidden] { display: none !important; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
-    integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok"
-    crossorigin="anonymous"></script>
 </head>
 <body>
   <main>
@@ -70,9 +67,8 @@
     <ul id="notes" aria-live="polite"><li>가상 자료를 불러오는 중입니다.</li></ul>
   </main>
   <script type="module">
-    // 공개용 값만 둡니다. 서버 전용 키(sb_secret_…)는 절대 이 파일에 넣지 마세요.
-    const SUPABASE_URL = 'https://cywkylybleiyhzupizbt.supabase.co';
-    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_XjCZgbbbeaSPdSedvGq9Qg_eZHS9qJf';
+    // 이 화면에는 Supabase 주소와 키가 없습니다. 로그인은 /api/auth/* 서버 함수로만 합니다.
+    // access token은 이 변수(메모리)에만 두고, refresh token은 화면이 읽을 수 없는 HttpOnly 쿠키에 있습니다.
 
     const form = document.querySelector('#login-form');
     const emailInput = document.querySelector('#login-email');
@@ -92,7 +88,7 @@
     const noteCancel = document.querySelector('#note-cancel');
     const noteError = document.querySelector('#note-error');
 
-    // 토큰이 갱신돼도 최신 세션을 쓰도록 onAuthStateChange에서 계속 바꿉니다.
+    // { access_token, expires_at, user: { email } } 또는 null. 저장소에는 쓰지 않습니다.
     let currentSession = null;
     let editingId = null;
 
@@ -105,7 +101,7 @@
       noteError.textContent = message;
       noteError.hidden = !message;
     };
-    const api = async (path, { method = 'GET', body } = {}) => {
+    const api = async (path, { method = 'GET', body } = {}, retried = false) => {
       if (!currentSession) throw new Error('로그인하면 자료가 보입니다.');
       const headers = { Authorization: `Bearer ${currentSession.access_token}` };
       if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -113,6 +109,10 @@
         method, cache: 'no-store', headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
+      // access token이 만료됐으면 한 번만 갱신하고 다시 보냅니다.
+      if (response.status === 401 && !retried && await refreshSession()) {
+        return api(path, { method, body }, true);
+      }
       if (response.status === 401 || response.status === 403) {
         throw new Error('로그인을 확인하지 못했습니다. 다시 로그인해 주세요.');
       }
@@ -217,61 +217,105 @@
       authError.textContent = message;
       authError.hidden = !message;
     };
-    const loginErrorMessage = error => {
+    // 서버 함수가 돌려준 오류 코드를 지금까지와 같은 문구로 보여 줍니다.
+    const loginErrorMessage = code => {
       const reasons = {
         invalid_credentials: '이메일 또는 비밀번호가 맞지 않습니다.',
         email_not_confirmed: '이메일 인증이 끝나지 않은 계정입니다.',
         user_banned: '사용이 정지된 계정입니다.',
         over_request_rate_limit: '로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요.',
+        INVALID_LOGIN_REQUEST: '이메일과 비밀번호를 확인해 주세요.',
+        AUTH_NOT_CONFIGURED: '로그인 설정이 끝나지 않았습니다. 관리자에게 알려 주세요.',
       };
-      if (error.status === 0 || error.name === 'AuthRetryableFetchError') {
+      if (code === 'AUTH_UNAVAILABLE' || code === 'network') {
         return '로그인 서버에 연결하지 못했습니다. 네트워크를 확인하세요.';
       }
-      return `로그인 실패: ${reasons[error.code] ?? error.message}`;
+      return `로그인 실패: ${reasons[code] ?? '로그인하지 못했습니다.'}`;
     };
     const render = session => {
       form.hidden = Boolean(session);
       signedIn.hidden = !session;
-      authStatus.textContent = session ? `${session.user.email} 계정으로 로그인했습니다.` : '';
+      authStatus.textContent = session ? `${session.user.email ?? '이'} 계정으로 로그인했습니다.` : '';
     };
+    const authPost = (path, extraHeaders = {}, body = {}) => fetch(path, {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
+      body: JSON.stringify(body),
+    });
 
-    if (!SUPABASE_PUBLISHABLE_KEY || !window.supabase) {
-      showError(!window.supabase ? '로그인 도구(supabase-js)를 불러오지 못했습니다.'
-        : '로그인 설정이 끝나지 않았습니다. 공개용 publishable key를 넣어 주세요.');
-      showListMessage('로그인하면 자료가 보입니다.');
-    } else {
-      const auth = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY).auth;
-      // 처음 열 때(INITIAL_SESSION)·로그인·로그아웃마다 화면과 메모 목록을 다시 맞춥니다.
-      // 토큰 갱신(TOKEN_REFRESHED)은 목록을 다시 부르지 않습니다.
-      auth.onAuthStateChange((event, session) => {
-        currentSession = session;
-        render(session);
-        if (event !== 'TOKEN_REFRESHED' && event !== 'USER_UPDATED') {
-          setTimeout(() => loadNotes(), 0);
+    // 만료 1분 전에 HttpOnly 쿠키로 새 access token을 받습니다. 목록은 다시 부르지 않습니다.
+    let refreshTimer = null;
+    const setSession = session => {
+      currentSession = session;
+      clearTimeout(refreshTimer);
+      if (Number.isFinite(session?.expires_at)) {
+        const seconds = session.expires_at - Math.floor(Date.now() / 1000) - 60;
+        refreshTimer = setTimeout(() => refreshSession(), Math.max(10, seconds) * 1000);
+      }
+      render(session);
+    };
+    // 갱신 요청이 겹치면 하나만 보냅니다(refresh token은 한 번 쓰면 바뀝니다).
+    let refreshing = null;
+    const refreshSession = () => refreshing ??= (async () => {
+      try {
+        const response = await authPost('/api/auth/refresh');
+        if (!response.ok) {
+          if (currentSession) {
+            setSession(null);
+            loadNotes();
+          }
+          return false;
         }
-      });
+        setSession(await response.json());
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshing = null;
+      }
+    })();
 
-      form.addEventListener('submit', async event => {
-        event.preventDefault();
-        showError('');
-        loginButton.disabled = true;
-        const { error } = await auth.signInWithPassword({
-          email: emailInput.value.trim(),
-          password: passwordInput.value,
-        });
-        passwordInput.value = '';
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      showError('');
+      loginButton.disabled = true;
+      const credentials = { email: emailInput.value.trim(), password: passwordInput.value };
+      passwordInput.value = '';
+      try {
+        const response = await authPost('/api/auth/login', {}, credentials);
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          showError(loginErrorMessage(data?.error));
+          return;
+        }
+        setSession(data);
+        loadNotes();
+      } catch {
+        showError(loginErrorMessage('network'));
+      } finally {
         loginButton.disabled = false;
-        if (error) showError(loginErrorMessage(error));
-      });
+      }
+    });
 
-      logoutButton.addEventListener('click', async () => {
-        showError('');
-        logoutButton.disabled = true;
-        const { error } = await auth.signOut();
+    logoutButton.addEventListener('click', async () => {
+      showError('');
+      logoutButton.disabled = true;
+      const token = currentSession?.access_token;
+      try {
+        const response = await authPost('/api/auth/logout', token ? { Authorization: `Bearer ${token}` } : {});
+        if (!response.ok) showError('로그아웃 요청이 실패했지만 이 화면에서는 로그아웃했습니다.');
+      } catch {
+        showError('로그아웃 요청이 실패했지만 이 화면에서는 로그아웃했습니다.');
+      } finally {
         logoutButton.disabled = false;
-        if (error) showError(`로그아웃 실패: ${error.message}`);
-      });
-    }
+        setSession(null);
+        loadNotes();
+      }
+    });
+
+    // 처음 열 때: HttpOnly 쿠키가 있으면 로그인 상태를 되살리고, 없으면 로그인 폼을 보여 줍니다.
+    if (!(await refreshSession())) render(null);
+    loadNotes();
   </script>
 </body>
 </html>

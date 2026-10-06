@@ -135,14 +135,15 @@ export async function runAttackChecks(config) {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
     });
     const page = await get(app, '/');
-    const pageText = page.ok ? await page.clone().text() : '';
     const leaked = await keyLeak([page, list, forged]);
-    // anon 점검에는 배포된 화면이 실제로 쓰는 공개용 publishable key만 씁니다.
-    const publishable = /SUPABASE_PUBLISHABLE_KEY\s*=\s*'(sb_publishable_[A-Za-z0-9_-]+)'/u.exec(pageText)?.[1];
-    let dataRead = '화면에서 publishable key를 찾지 못해 미실행';
+    // anon 점검에는 공개용 publishable key만 씁니다. 화면에는 키가 없으므로
+    // 로컬 환경변수 SUPABASE_PUBLISHABLE_KEY로만 받고, 없으면 이 점검은 미실행으로 남깁니다.
+    const publishable = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    let dataRead = '로컬 환경변수 SUPABASE_PUBLISHABLE_KEY가 없어 미실행';
     let dataInsert = dataRead;
     if (publishable) {
-      const rest = new URL('/rest/v1/vault_notes', new URL(config.identityProvider.issuer).origin);
+      const rest = new URL(config.originalApiUrl
+        ?? new URL('/rest/v1/vault_notes', new URL(config.identityProvider.issuer).origin));
       const anonHeaders = { apikey: publishable };
       const read = await fetch(`${rest}?select=id&limit=1`, {
         headers: anonHeaders, redirect: 'error', signal: AbortSignal.timeout(10000),
