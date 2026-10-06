@@ -24,6 +24,7 @@
     .auth button:disabled { opacity: .6; cursor: wait; }
     .auth-error { margin: 10px 0 0; color: #ffb4c0; }
     .auth-status { margin: 0 0 10px; }
+    [hidden] { display: none !important; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
     integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok"
@@ -34,7 +35,7 @@
     <div class="eyebrow">BYTE BACK · 2단계 자료를 코드 밖으로</div>
     <h1>점령된 자료실</h1>
     <p>지금은 보호 장치가 없는 상태입니다. 아래 기록은 모두 실습을 위해 만든 가상 자료입니다.</p>
-    <div class="notice">로그인하지 않은 방문자도 자료를 볼 수 있습니다. 공개 범위를 확인하고, 다음 제작 단계에서 접근을 차례로 막아 주세요.</div>
+    <div class="notice">자료는 로그인한 계정에만 보입니다. 서버가 로그인 토큰을 검사한 뒤에만 자료를 보냅니다.</div>
     <section class="auth" aria-labelledby="auth-title">
       <h2 id="auth-title">로그인</h2>
       <form id="login-form" hidden>
@@ -63,6 +64,48 @@
     const authStatus = document.querySelector('#auth-status');
     const logoutButton = document.querySelector('#logout-button');
     const authError = document.querySelector('#auth-error');
+    const list = document.querySelector('#notes');
+
+    const showListMessage = message => {
+      const item = document.createElement('li');
+      item.textContent = message;
+      list.replaceChildren(item);
+    };
+    // 로그인·로그아웃이 겹치면 마지막 요청의 결과만 화면에 씁니다.
+    let notesRequest = 0;
+    const loadNotes = async session => {
+      const current = ++notesRequest;
+      if (!session) {
+        showListMessage('로그인하면 자료가 보입니다.');
+        return;
+      }
+      showListMessage('가상 자료를 불러오는 중입니다.');
+      try {
+        const response = await fetch('/api/notes', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (current !== notesRequest) return;
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('로그인을 확인하지 못했습니다. 다시 로그인해 주세요.');
+        }
+        if (!response.ok) throw new Error('자료 함수를 읽을 수 없습니다.');
+        const data = await response.json();
+        if (current !== notesRequest) return;
+        if (!Array.isArray(data.notes)) throw new Error('자료 형식이 맞지 않습니다.');
+        list.replaceChildren(...data.notes.map(note => {
+          const item = document.createElement('li');
+          const title = document.createElement('strong');
+          const content = document.createElement('span');
+          title.textContent = note.title;
+          content.textContent = note.content;
+          item.append(title, content);
+          return item;
+        }));
+      } catch (error) {
+        if (current === notesRequest) showListMessage(error.message);
+      }
+    };
 
     const showError = message => {
       authError.textContent = message;
@@ -89,11 +132,17 @@
     if (!SUPABASE_PUBLISHABLE_KEY || !window.supabase) {
       showError(!window.supabase ? '로그인 도구(supabase-js)를 불러오지 못했습니다.'
         : '로그인 설정이 끝나지 않았습니다. 공개용 publishable key를 넣어 주세요.');
+      showListMessage('로그인하면 자료가 보입니다.');
     } else {
       const auth = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY).auth;
-      auth.onAuthStateChange((_event, session) => render(session));
-      const { data } = await auth.getSession();
-      render(data.session);
+      // 처음 열 때(INITIAL_SESSION)·로그인·로그아웃마다 화면과 메모 목록을 다시 맞춥니다.
+      // 토큰 갱신(TOKEN_REFRESHED)은 목록을 다시 부르지 않습니다.
+      auth.onAuthStateChange((event, session) => {
+        render(session);
+        if (event !== 'TOKEN_REFRESHED' && event !== 'USER_UPDATED') {
+          setTimeout(() => loadNotes(session), 0);
+        }
+      });
 
       form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -115,28 +164,6 @@
         logoutButton.disabled = false;
         if (error) showError(`로그아웃 실패: ${error.message}`);
       });
-    }
-  </script>
-  <script type="module">
-    const list = document.querySelector('#notes');
-    try {
-      const response = await fetch('/api/notes', { cache: 'no-store' });
-      if (!response.ok) throw new Error('자료 함수를 읽을 수 없습니다.');
-      const data = await response.json();
-      if (!Array.isArray(data.notes)) throw new Error('자료 형식이 맞지 않습니다.');
-      list.replaceChildren(...data.notes.map(note => {
-        const item = document.createElement('li');
-        const title = document.createElement('strong');
-        const content = document.createElement('span');
-        title.textContent = note.title;
-        content.textContent = note.content;
-        item.append(title, content);
-        return item;
-      }));
-    } catch (error) {
-      const item = document.createElement('li');
-      item.textContent = error.message;
-      list.replaceChildren(item);
     }
   </script>
 </body>
