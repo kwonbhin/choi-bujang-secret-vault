@@ -1,9 +1,9 @@
-// 3단계: /api/notes, /api/notes/:id 서버 함수가 함께 쓰는 로그인 검사와 메모 처리입니다.
+// /api/notes, /api/notes/:id 서버 함수가 함께 쓰는 로그인 검사와 메모 처리입니다.
 // 사용자는 src/verify-login.mjs가 검사한 토큰의 userId로만 정합니다.
-// 요청 본문·쿼리의 userId·role·owner_id는 읽지 않습니다.
+// 요청 URL·본문의 userId·role·owner_id로 소유자를 정하지 않습니다.
 // 키는 Vercel 환경변수에서만 읽고 응답·로그에 넣지 않습니다.
-// 알려진 허점(4단계에서 고침): 한 건 GET·PUT·DELETE는 아직 소유자를 검사하지 않아
-// 로그인한 B가 A의 메모 id를 알면 읽고 고치고 지울 수 있습니다.
+// 4단계 소유자 검사: 모든 읽기·수정·삭제 조회에 owner_id = 검사된 userId 조건을 함께 겁니다.
+// 남의 메모와 없는 메모는 같은 404 NOTE_NOT_FOUND로 답해 있는지 없는지 드러내지 않습니다.
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
@@ -39,12 +39,19 @@ class HttpError extends Error {
   }
 }
 
-function readNote(raw, { allowId }) {
+const OWNER_FIELDS = ['owner_id', 'ownerId', 'user_id', 'userId'];
+
+// ownerOf가 있으면(수정) 본문의 소유자 칸이 검사된 ID와 다를 때 거부합니다.
+// 추가에서는 본문의 소유자 칸을 읽지 않고 검사된 ID로 저장합니다.
+function readNote(raw, { allowId, ownerOf }) {
   let input = raw;
   if (typeof input === 'string') {
     try { input = JSON.parse(input); } catch { throw new HttpError(400, 'INVALID_JSON'); }
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'INVALID_NOTE');
+  if (ownerOf && OWNER_FIELDS.some(key => key in input && input[key] !== ownerOf)) {
+    throw new HttpError(403, 'OWNER_CHANGE_FORBIDDEN');
+  }
   const { id, title, body } = input;
   if (typeof title !== 'string' || !title.trim() || title.length > TITLE_MAX
       || typeof body !== 'string' || body.length > BODY_MAX) {
@@ -81,20 +88,27 @@ const collection = {
 
 const item = {
   methods: ['GET', 'PUT', 'DELETE'],
-  async GET({ supabase, id }) {
-    const row = checked(await supabase.from(TABLE).select(COLUMNS).eq('id', id).maybeSingle());
+  async GET({ supabase, id, login }) {
+    const row = checked(await supabase.from(TABLE).select(COLUMNS)
+      .eq('id', id).eq('owner_id', login.userId).maybeSingle());
     if (!row) throw new HttpError(404, 'NOTE_NOT_FOUND');
     return [200, toNote(row)];
   },
-  async PUT({ supabase, id, request }) {
-    const note = readNote(request.body, { allowId: false });
+  async PUT({ supabase, id, login, request }) {
+    const note = readNote(request.body, { allowId: false, ownerOf: login.userId });
+    // 기존 행: owner_id 조건으로 본인 행만 고칩니다. 새 행: owner_id는 바꾸지 않고 결과로 다시 확인합니다.
     const row = checked(await supabase.from(TABLE).update({ title: note.title, content: note.body })
-      .eq('id', id).select(COLUMNS).maybeSingle());
+      .eq('id', id).eq('owner_id', login.userId).select(`${COLUMNS}, owner_id`).maybeSingle());
     if (!row) throw new HttpError(404, 'NOTE_NOT_FOUND');
+    if (row.owner_id !== login.userId) {
+      console.error('notes: 수정 결과의 소유자가 요청한 사용자와 다릅니다.');
+      throw new HttpError(500, 'OWNER_CHECK_FAILED');
+    }
     return [200, toNote(row)];
   },
-  async DELETE({ supabase, id }) {
-    const row = checked(await supabase.from(TABLE).delete().eq('id', id).select('id').maybeSingle());
+  async DELETE({ supabase, id, login }) {
+    const row = checked(await supabase.from(TABLE).delete()
+      .eq('id', id).eq('owner_id', login.userId).select('id').maybeSingle());
     if (!row) throw new HttpError(404, 'NOTE_NOT_FOUND');
     return [200, { id: row.id }];
   },
