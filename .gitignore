@@ -6,3 +6,5 @@ node_modules/
 public/aleph.json
 supabase/seed.local.sql
 supabase/*.local.sql
+xdr/alerts.log
+xdr/deny-rules.json
