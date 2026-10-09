@@ -1,6 +1,7 @@
 // decide.mjs 의 판단 가운데 block 후보만 거부 규칙 후보로 쌓고, block·alert 알림을 한 줄씩 남깁니다.
 // decide.mjs 와 src/decider.mjs 는 고치지 않습니다. 판정기는 아직 이 규칙 파일을 읽지 않습니다.
-// 규칙은 출발 주소에만 겁니다. 경보의 계정(srcuser)은 공격 대상, 곧 정상 사용자일 수 있으므로 막지 않습니다.
+// 규칙은 출발 주소에만 겁니다. 계정(srcuser)은 막지 않습니다.
+// xdr/deny-rules.json 은 brute-force 와 함께 씁니다. 다른 모듈의 규칙은 지우거나 덮어쓰지 않습니다.
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,11 +10,11 @@ import { decide } from './decide.mjs';
 
 export const RULE_SCHEMA = 'aleph.xdr.deny-rules.v1';
 // docs/DECIDER_REQUEST.md 응답 어휘에 맞춘 이름입니다. reasonCode 는 운영 등록부에 아직 등록되지 않았습니다.
-export const RULE_ID = 'xdr_brute_force_block';
-export const REASON_CODE = 'xdr_brute_force';
+export const RULE_ID = 'xdr_web_injection_block';
+export const REASON_CODE = 'xdr_web_injection';
 export const RULE_TTL_MINUTES = 60;
-export const MODULE_KEY = 'brute-force';
-const ID_PREFIX = 'xdr-bf-';
+export const MODULE_KEY = 'web-injection';
+const ID_PREFIX = 'xdr-wi-';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_RULES_PATH = join(root, 'xdr', 'deny-rules.json');
@@ -60,8 +61,9 @@ export async function respond({
       confidence: 0,
     };
     rule.evidenceAlertIds.push(j.alertId);
-    const pattern = j.reason.split(':')[0];
-    if (!rule.patterns.includes(pattern)) rule.patterns.push(pattern);
+    for (const pattern of j.reason.split(':')[0].split('+')) {
+      if (!rule.patterns.includes(pattern)) rule.patterns.push(pattern);
+    }
     rule.confidence = Math.max(rule.confidence, j.confidence);
     fresh.set(j.srcip, rule);
   }
@@ -104,7 +106,7 @@ async function readRules(path) {
 }
 
 // 이 모듈의 만료된 규칙만 지우고, 같은 주소의 규칙은 근거를 합치고 만료 시각을 늦춥니다.
-// 다른 모듈(web-injection 등)이 넣은 규칙은 만료 여부와 상관없이 그대로 둡니다.
+// 다른 모듈(brute-force 등)이 넣은 규칙은 만료 여부와 상관없이 그대로 둡니다.
 function mergeRules(existing, incoming, now) {
   const byId = new Map();
   const others = [];
@@ -143,9 +145,9 @@ async function writeRules(path, rules, nowIso) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const fixture = JSON.parse(await readFile(join(root, 'xdr', 'fixtures', 'brute-force.json'), 'utf8'));
+    const fixture = JSON.parse(await readFile(join(root, 'xdr', 'fixtures', 'web-injection.json'), 'utf8'));
     const summary = await respond({ alerts: fixture.alerts });
-    console.log(`거부 규칙 후보 추가 ${summary.added}건, brute-force 유효 ${summary.active}건, 알림 ${summary.logged}줄`);
+    console.log(`거부 규칙 후보 추가 ${summary.added}건, web-injection 유효 ${summary.active}건, 알림 ${summary.logged}줄`);
     for (const s of summary.skipped) console.log(`건너뜀: ${s.alertId || '(번호 없음)'} — ${s.why}`);
     console.log('로컬 연습 결과이며 판정기에 연결되지 않았고 심판 판정도 아닙니다.');
   } catch (error) {

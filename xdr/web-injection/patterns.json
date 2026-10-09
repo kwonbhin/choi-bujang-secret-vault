@@ -1,0 +1,51 @@
+{
+  "moduleKey": "web-injection",
+  "source": "MITRE ATT&CK T1190 Exploit Public-Facing Application (https://attack.mitre.org/techniques/T1190/)",
+  "note": "알려진 공격 형태만 적었습니다. ATT&CK은 횟수 기준값을 정하지 않으므로 여기에도 숫자 기준을 넣지 않았습니다. 판정 기준은 decide.mjs 제작 단계에서 정합니다. 경보의 url 값은 문서용 표기이므로 실제 공격 문자열로 바꾸거나 다른 시스템에 넣지 않습니다.",
+  "patterns": [
+    {
+      "name": "sql-injection",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "mitre": "rule.mitre 에 T1190 이 있음",
+        "inRequestArgument": "요청 인자(data.url 의 ? 뒤) 안에 있음",
+        "sqlSyntax": "SQL 구문·조회를 이어 붙이는 표기 (설명 또는 인자)",
+        "repeated": "같은 data.srcip 에서 여러 번 반복 (data.count)"
+      },
+      "evidence": "T1190: 외부에 공개된 웹 앱의 약점을 노려 접근하는 기법이며, 요청 인자에 SQL 구문을 넣어 데이터베이스 질의를 바꾸는 SQL 주입(CWE-89)이 대표적인 형태입니다."
+    },
+    {
+      "name": "script-injection",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "mitre": "rule.mitre 에 T1190 이 있음",
+        "inRequestArgument": "요청 인자(data.url 의 ? 뒤) 안에 있음",
+        "scriptTag": "스크립트 태그·삽입 표식 (설명 또는 인자)",
+        "repeated": "같은 data.srcip 에서 여러 번 반복 (data.count)"
+      },
+      "evidence": "T1190: 외부 공개 웹 앱의 입력 처리 약점을 노리는 기법이며, 요청 인자에 스크립트 태그를 넣어 화면에서 실행되게 하는 스크립트 삽입(CWE-79)이 그런 약점의 하나입니다."
+    },
+    {
+      "name": "path-traversal",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "mitre": "rule.mitre 에 T1190 이 있음",
+        "inRequestArgument": "요청 경로나 인자(data.url 의 ? 앞 경로 부분, 또는 ? 뒤 인자, 예: path·name) 안에 있음",
+        "parentDirectoryRepeat": "경로를 거슬러 올라가는 ../ 표기가 여러 단계 반복 (설명 또는 인자)",
+        "repeated": "같은 data.srcip 에서 여러 번 반복 (data.count)"
+      },
+      "evidence": "T1190: 외부 공개 웹 앱의 약점을 노리는 기법이며, 파일 경로 인자에 ../ 를 반복해 허용 폴더 밖의 파일을 읽으려는 경로 이탈(CWE-22)이 그런 약점의 하나입니다."
+    },
+    {
+      "name": "command-injection",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "mitre": "rule.mitre 에 T1190 이 있음",
+        "inRequestArgument": "요청 인자(data.url 의 ? 뒤) 안에 있음",
+        "commandSeparator": "명령 구분자 표기 (설명 또는 인자)",
+        "repeated": "같은 data.srcip 에서 여러 번 반복 (data.count)"
+      },
+      "evidence": "T1190: 외부 공개 웹 앱의 입력 처리 약점을 노리는 기법이며, 요청 인자에 명령 구분자를 넣어 서버에서 운영체제 명령이 실행되게 하는 명령 주입(CWE-78)이 그런 약점의 하나입니다."
+    }
+  ]
+}
