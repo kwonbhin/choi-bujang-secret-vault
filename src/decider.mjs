@@ -8,7 +8,9 @@ const NOTE_READ_ROUTE = /^GET \/notes(?:\/:id)?$/u;
 
 // 계약에 나온 signals.source 두 값만 압니다. 그 밖의 출처는 신뢰하는 접속 정보로 쓰지 않습니다.
 const KNOWN_SOURCES = new Set(['none', 'judge_fixture']);
-const USUAL_HOURS = { from: 7, to: 22 }; // UTC 기준 평소 접속 시각(이 범위 밖이면 평소와 다른 시각)
+// 평소와 다른 시각: signals.hour 0~5시. 계약에 hour의 시간대가 없어 추측하지 않고,
+// 연습 요청(scripts/fixture-7.mjs)의 정상 14시·이상 3시를 근거로 새벽 구간만 봅니다.
+const UNUSUAL_HOURS = { from: 0, to: 5 };
 const BURST_WINDOW_SECONDS = 600; // 최근 10분 안의 사건만 셉니다.
 const BURST_COUNT = 10; // 그 안에 이만큼 넘게 몰리면 갑자기 많은 읽기로 봅니다.
 const STEP_UP_MAX_AGE_SECONDS = 300; // 추가 인증 뒤 5분 안의 요청만 다시 확인된 것으로 봅니다.
@@ -75,7 +77,7 @@ export async function decide(request) {
   const signals = readSignals(request.signals);
   const burst = recentBurst(request.recentEvents);
   const unusualAccess = signals.trusted && signals.evidence !== null
-    && (signals.evidence.hour < USUAL_HOURS.from || signals.evidence.hour > USUAL_HOURS.to)
+    && signals.evidence.hour >= UNUSUAL_HOURS.from && signals.evidence.hour <= UNUSUAL_HOURS.to
     && signals.evidence.network === 'unusual'
     && burst !== null && burst > BURST_COUNT;
   if ((!signals.trusted || burst === null || unusualAccess) && !freshStepUp(request.stepUp)) {

@@ -53,8 +53,9 @@
 
 ## 7단계: 평소와 다른 접속은 다시 확인합니다
 
-- **판정기 규칙 `step_up_required`** (`src/decider.mjs`): 등록 기기의 메모 읽기에서 평소와 다른 시각(`signals.hour`가 UTC 7~22시 밖), 처음 보는 네트워크(`signals.network`가 `unusual`), 갑자기 많은 읽기(`recentEvents`의 최근 10분 `count` 합이 10 초과)가 **함께** 보이면 `step_up`·`step_up_required`로 추가 확인을 요청합니다. 하나만 다르면 허용합니다.
+- **판정기 규칙 `step_up_required`** (`src/decider.mjs`): 등록 기기의 메모 읽기에서 평소와 다른 시각(`signals.hour`가 0~5시), 처음 보는 네트워크(`signals.network`가 `unusual`), 갑자기 많은 읽기(`recentEvents`의 최근 10분 `count` 합이 10 초과)가 **함께** 보이면 `step_up`·`step_up_required`로 추가 확인을 요청합니다. 하나만 다르면 허용합니다.
 - **판단 순서**: 미등록 기기 거부(`device_registered`) → 메모 읽기가 아니면 `starter.deny` → 복합 이상이면 `step_up` → 허용. 미등록 기기는 접속 정보와 상관없이 먼저 거부됩니다.
+- **시각 기준의 근거와 한계**: 계약에는 `hour`의 시간대도, 엔진이 "평소와 다른 시각"을 판단한 값도 없습니다. 시간대를 추측하지 않고 연습 요청(`scripts/fixture-7.mjs`)의 정상 14시·이상 3시를 근거로 새벽 0~5시만 평소와 다른 시각으로 봅니다. 엔진의 `hour`가 어느 시간대인지 확인되면 이 범위를 다시 맞춰야 합니다. 처음 보는 네트워크는 엔진이 판단해 넘기는 `signals.network`의 `unusual` 값을 그대로 씁니다.
 - **지역만으로 막지 않습니다.** `signals.region`은 판단에 쓰지 않고, 영구 차단도 없습니다. 거부·추가 확인 사유는 `reasonCode`와 `ruleIds`로 남습니다(응답은 계약의 다섯 항목만).
 - **입력 검사**: 접속 정보는 엔진이 만든 `signals`(`{source, region, network, hour}`), `recentEvents`(`{kind, ageSeconds, count}` 최대 12건), `stepUp`(`{verified, authAgeSeconds}`)만 씁니다. 계약은 브라우저 헤더를 넘기지 않고 판정기도 헤더를 읽지 않습니다. `signals.source`가 계약의 `none`·`judge_fixture`가 아니거나, 항목이 빠지거나 더해졌거나, `hour`가 0~23 정수가 아니면 정상으로 채우지 않고 `step_up`으로 보냅니다. 실제 경로의 `source: "none"`은 위치 증거가 없다는 뜻이라 정상값으로 바꾸지 않고, 시각·네트워크 판단을 하지 않습니다.
 - **재로그인 뒤 다시 판정**: 계약의 `stepUp`에서 `verified`가 정확히 `true`이고 `authAgeSeconds`가 0~300초 정수일 때만 다시 확인된 것으로 보고 허용합니다. 문자열 `"true"`나 300초를 넘긴 확인은 다시 `step_up`입니다. 토큰 원문은 판정 요청에 없고 기록하지도 않습니다.
