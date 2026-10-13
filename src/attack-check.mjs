@@ -174,7 +174,7 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step === 5 || config.step === 6) {
+  if (config.step >= 5 && config.step <= 7) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -230,11 +230,11 @@ export async function runAttackChecks(config) {
       { attackId: 'anon_original_api_insert', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
         observed: dataInsert },
     ];
-    if (config.step === 6) {
+    if (config.step >= 6) {
       // 6단계: 로컬 판정기에 가상 요청을 넣은 실제 응답만 기록합니다. 반 엔진이나 심판의 판정이 아닙니다.
       const { fixtureRequests } = await import('../scripts/fixture-7.mjs');
       const { decide } = await import('./decider.mjs');
-      const { normal } = fixtureRequests();
+      const { normal, suspicious } = fixtureRequests();
       const answer = async request => {
         try {
           const response = await decide(request);
@@ -249,6 +249,20 @@ export async function runAttackChecks(config) {
         { attackId: 'decider_unregistered_device', expected: '로컬 판정기에 미등록 기기(deviceRegistered: false) 가상 요청을 넣으면 deny·device_not_registered',
           observed: `로컬 판정기 응답: ${await answer({ ...normal, deviceRegistered: false })}` },
       );
+      if (config.step >= 7) {
+        // 7단계: 복합 이상 가상 사건, 추가 인증 뒤 다시 판정, 계약에 없는 출처의 접속 신호를 넣어 봅니다.
+        checks.push(
+          { attackId: 'decider_unusual_access_step_up', expected: '평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 step_up·step_up_required',
+            observed: `로컬 판정기 응답: ${await answer(suspicious)}` },
+          { attackId: 'decider_step_up_verified_retry', expected: '같은 가상 사건에 엔진의 추가 인증(stepUp verified, 60초)이 붙으면 다시 판정해 allow',
+            observed: `로컬 판정기 응답: ${await answer({ ...suspicious, stepUp: { verified: true, authAgeSeconds: 60 } })}` },
+          { attackId: 'decider_forged_signal_source', expected: '계약에 없는 출처(client_header)의 정상처럼 보이는 접속 신호는 믿지 않고 step_up',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal,
+              signals: { source: 'client_header', region: 'local', network: 'usual', hour: 14 } })}` },
+          { attackId: 'relay_step_up_data_block', expected: '실제 릴레이가 추가 확인 전 /api/notes 자료를 막고 재로그인 뒤 다시 판정함',
+            observed: '미실행: 실제 재로그인·자료 차단은 반 엔진이 맡고, 이 저장소의 api/는 판정기를 부르지 않아 학생이 직접 보낼 수 없음' },
+        );
+      }
     }
     return checks;
   }
