@@ -15,12 +15,16 @@ export const RESOURCE_KINDS = Object.freeze({
   note: Object.freeze({ service: 'notes', prefix: '/notes' }),
   notice: Object.freeze({ service: 'notices', prefix: '/notices' }),
 });
+// 메모는 한 건 읽기·수정만 허용합니다. 메모 전체 목록(GET /notes)은 표에 없어 거부됩니다.
+// 공지 경로의 쓰기(POST·PUT·PATCH·DELETE)는 모두 zone_notice_update로 거부합니다.
+const NOTICE_WRITE = { kind: 'notice', ruleId: 'zone_notice_update', deny: 'instructor_role_contract_missing' };
 const ZONES = Object.freeze({
-  'GET /notes': { kind: 'note', item: false, ruleId: 'zone_note_read' },
   'GET /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_read' },
   'PUT /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_update' },
-  'PUT /notices/:id': { kind: 'notice', item: true, ruleId: 'zone_notice_update',
-    deny: 'instructor_role_contract_missing' },
+  ...Object.fromEntries(['POST', 'PUT', 'PATCH', 'DELETE'].flatMap(method => [
+    [`${method} /notices`, { ...NOTICE_WRITE, item: false }],
+    [`${method} /notices/:id`, { ...NOTICE_WRITE, item: true }],
+  ])),
 });
 // 자료 ID 모양입니다. 점·슬래시·% 인코딩은 받지 않습니다.
 const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;

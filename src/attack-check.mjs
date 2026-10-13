@@ -280,6 +280,11 @@ export async function runAttackChecks(config) {
               queryLength: query.length, querySha256: createHash('sha256').update(query).digest('hex') })}` },
           { attackId: 'decider_zone_function_segment', expected: ':id 자리에 기능 이름이 온 GET /notes/export는 deny·starter_not_ready',
             observed: `로컬 판정기 응답: ${await answer({ ...normal, path: '/notes/export' })}` },
+          { attackId: 'decider_zone_note_list', expected: '메모 전체 목록 GET /notes는 구역 표에 없어 deny·starter_not_ready',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes', path: '/notes' })}` },
+          { attackId: 'decider_zone_notice_delete', expected: '공지 삭제 DELETE /notices/:id도 deny·instructor_role_contract_missing',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, service: 'notices', method: 'DELETE',
+              route: 'DELETE /notices/:id', path: '/notices/week3' })}` },
         );
       }
     }

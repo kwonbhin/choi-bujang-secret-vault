@@ -73,20 +73,20 @@
 
   | route | 결정 | 규칙 |
   |---|---|---|
-  | `GET /notes`, `GET /notes/:id` | `allow`·`approved` (7단계 복합 이상이면 `step_up`) | `zone_note_read` |
+  | `GET /notes/:id` | `allow`·`approved` (7단계 복합 이상이면 `step_up`) | `zone_note_read` |
   | `PUT /notes/:id` | `allow`·`approved` (7단계 복합 이상이면 `step_up`) | `zone_note_update` |
-  | `PUT /notices/:id` | 항상 `deny`·`instructor_role_contract_missing` | `zone_notice_update` |
-  | 그 밖의 route, 쿼리가 붙은 요청(`queryLength`가 0이 아님), `:id` 자리의 기능 이름(`export` 등), method·service·path가 route와 맞지 않는 요청 | `deny`·`starter_not_ready` | `starter.deny` |
+  | `POST`·`PUT`·`PATCH`·`DELETE` `/notices`, `/notices/:id` | 항상 `deny`·`instructor_role_contract_missing` | `zone_notice_update` |
+  | 그 밖의 route(메모 전체 목록 `GET /notes` 포함), 쿼리가 붙은 요청(`queryLength`가 0이 아님), `:id` 자리의 기능 이름(`export` 등), method·service·path가 route와 맞지 않는 요청 | `deny`·`starter_not_ready` | `starter.deny` |
 
-- **판단 순서**: 미등록 기기 거부(`device_registered`) → 구역 표에 없으면 `starter.deny` → 공지 수정 거부 → 7단계 복합 이상이면 `step_up` → 허용.
-- **메모 주인은 API가 검사합니다.** 계약에는 자원의 주인이 없고 `subjectId`는 가명이라 판정기는 주인을 비교하지 않습니다. 그래서 B가 A의 메모를 요청해도 판정기에서는 경로상 `allow`이고, `/api/notes/:id`의 `owner_id` 조건(4단계)이 404 `NOTE_NOT_FOUND`로 막습니다.
-- **강사 역할 계약이 없습니다.** 계약에 `request.role`이 없어 판정기는 누구도 강사로 보지 않고, 공지 수정은 항상 거부합니다. 사용자·강사 목록 상수표는 만들지 않았습니다. 운영 엔진이 확인한 역할을 계약으로 넘겨주면 `zone_notice_update`에 허용 조건을 더할 수 있습니다. `instructor_role_contract_missing`은 운영 등록부에 아직 없는 이유 코드라 엔진이 받지 않을 수 있지만, 그때도 결과는 거부입니다.
+- **판단 순서**: 미등록 기기 거부(`device_registered`) → 구역 표에 없으면 `starter.deny` → 공지 쓰기 거부 → 7단계 복합 이상이면 `step_up` → 허용.
+- **메모 주인은 API가 검사합니다.** 계약에는 자원의 주인이 없고 `subjectId`는 가명이라 판정기는 주인을 비교하지 않습니다. 그래서 B가 A의 메모를 요청해도 판정기에서는 경로상 `allow`이고, `/api/notes/:id`의 `owner_id` 조건(4단계)이 404 `NOTE_NOT_FOUND`로 막습니다. 판정기는 메모 한 건 단위로만 허용하고, 메모 전체 목록 `GET /notes`는 판정기에서 거부합니다. `vault_notes`의 RLS 본인 행 정책은 직접 권한을 회수해 지금은 쓰이지 않으며, 권한이 되살아날 때를 대비해 남겨 두었습니다(서버 함수의 service_role은 RLS를 거치지 않습니다).
+- **강사 역할 계약이 없습니다.** 계약에 `request.role`이 없어 판정기는 누구도 강사로 보지 않고, 공지 쓰기(추가·수정·삭제)는 항상 거부합니다. 사용자·강사 목록 상수표는 만들지 않았습니다. 운영 엔진이 확인한 역할을 계약으로 넘겨주면 `zone_notice_update`에 허용 조건을 더할 수 있습니다. `instructor_role_contract_missing`은 운영 등록부에 아직 없는 이유 코드라 엔진이 받지 않을 수 있지만, 그때도 결과는 거부입니다.
 - **공지 API는 만들지 않았습니다.** 수정할 수 있는 사람이 없는 동안 항상 거부될 서버 함수를 새로 열지 않았습니다. 그래서 `allowedRoutes`는 바꾸지 않았습니다(배포된 자료 API 경로가 그대로입니다).
 - **기능은 경로·쿼리로 고르지 않습니다.** 쿼리는 자료 ID를 고르는 데도 쓰지 않으며, `:id`와 같은 깊이에 `export` 같은 기능 경로를 만들지 않았습니다.
-- **한계**: `POST /api/notes`(추가)와 `DELETE /api/notes/:id`(삭제)는 구역 표에 없어 판정기를 거치면 거부됩니다. 화면은 지금처럼 `/api/notes`를 직접 부르므로 추가·삭제는 그대로 작동합니다(이 저장소의 `api/`는 판정기를 부르지 않습니다).
+- **한계**: `GET /api/notes`(목록), `POST /api/notes`(추가), `DELETE /api/notes/:id`(삭제)는 구역 표에 없어 판정기를 거치면 거부됩니다. 화면은 지금처럼 `/api/notes`를 직접 부르므로 목록·추가·삭제는 그대로 작동합니다(이 저장소의 `api/`는 판정기를 부르지 않습니다).
 - **확인 순서** (로컬 가상 요청 연습이며 심판 판정이 아닙니다):
   1. `npm run decider:test`: 6·7단계 시험 네 줄이 모두 `통과`입니다. 이 스크립트에는 8단계 시험이 없습니다.
-  2. `npm run bundle`의 8단계 점검: 메모 수정은 `allow`, 공지 수정은 `deny`·`instructor_role_contract_missing`, 모르는 경로·쿼리 기능·`/notes/export`는 `deny`·`starter_not_ready`로 기록됩니다.
+  2. `npm run bundle`의 8단계 점검: 메모 수정은 `allow`, 공지 수정·삭제는 `deny`·`instructor_role_contract_missing`, 메모 전체 목록·모르는 경로·쿼리 기능·`/notes/export`는 `deny`·`starter_not_ready`로 기록됩니다.
   3. 거부되어야 할 결과가 `allow`로 나오면 `src/decider.mjs`의 `ZONES`와 `resourceOf`를 확인합니다.
 
 ## 남은 약점과 한계
@@ -127,7 +127,7 @@
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
 3. `main`에 push하면 Vercel이 배포합니다. `/aleph.json`의 `step`과 `commit`으로 배포된 커밋을 확인합니다.
 4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`. 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
-5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름의 응답 다섯 개를 더 기록합니다(반 엔진 판정 아님). 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
+5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름·메모 전체 목록·공지 삭제의 응답 일곱 개를 더 기록합니다(반 엔진 판정 아님). 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
    - Git Bash: `SUPABASE_PUBLISHABLE_KEY=<publishable key> npm run bundle`
    - PowerShell: `$env:SUPABASE_PUBLISHABLE_KEY='<publishable key>'; npm run bundle; Remove-Item Env:SUPABASE_PUBLISHABLE_KEY`
 
@@ -141,7 +141,7 @@
 - **보너스 (`c4f3df2` xdr-01, `cfd64cc` xdr-02)**: `xdr/brute-force`, `xdr/web-injection` 경보 판단. 판정기에는 연결하지 않았습니다.
 - **6단계 (저장점 `546c072`)**: 판정기 규칙 `device_registered`. 등록 기기의 메모 읽기만 허용하고, 미등록 기기는 `deny`·`device_not_registered`로 거부합니다.
 - **7단계 (저장점 `e757df3`, 보충 `97d06f2`)**: 판정기 규칙 `step_up_required`와 접속 신호 입력 검사. 평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 `step_up`, 엔진의 추가 인증 뒤에는 다시 판정해 허용합니다. 저장점 뒤에 평소와 다른 시각을 `signals.hour` 0~5시로 바꿨습니다.
-- **8단계 (이 저장점)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 읽기·수정만 경로상 허용하고, 강사 공지 수정은 강사 역할 계약이 없어 항상 거부, 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다.
+- **8단계 (이 저장점)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 한 건 읽기·수정만 경로상 허용하고, 강사 공지 쓰기(POST·PUT·PATCH·DELETE)는 강사 역할 계약이 없어 항상 거부, 메모 전체 목록과 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다.
 
 ## 가상 메모 문장 검색 절차
 
