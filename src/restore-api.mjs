@@ -4,11 +4,14 @@
 //   URL·본문·쿼리의 owner_id는 읽지 않습니다(본문은 아예 읽지 않습니다).
 // - 사본(vault_notes_snapshot)의 owner_id가 로그인 사용자이고, 지금 메모 행이 있으면 그 owner_id도
 //   로그인 사용자여야 합니다. 아니면 남의 메모와 없는 메모를 같은 404로 답합니다.
-// - 복원 전에 사본 해시를 다시 계산해 대조하고, 다르면 복원하지 않고 409로 멈춥니다.
+// - 복원 전에 사본 해시를 다시 계산해 대조하고, 다르면 복원하지 않고 409 BACKUP_VERIFICATION_FAILED로 멈춥니다.
+//   자기 메모가 있는데 사본이 없으면 409 BACKUP_MISSING으로 멈춥니다.
+// - 복원 직전에 사본을 한 번 더 읽어 검증한 그 행(version=snapshot_at, 해시)이 그대로인지 확인하고, 다르면 멈춥니다.
 // - 지정한 한 건만: 변조됐으면 사본 내용으로 덮어쓰고, 삭제됐으면 같은 id·owner_id로 다시 넣습니다.
 //   다른 메모, 사본, 감사 기록은 바꾸지 않습니다(감사 기록에 한 줄 더하는 것만).
 // - 복원 뒤 행을 다시 읽어 id·owner_id·해시가 사본과 같은지 확인합니다.
-// - 응답에는 id, 해시, 일치 여부만 넣고 메모 내용은 넣지 않습니다. 감사 기록에도 내용과 토큰은 넣지 않습니다.
+// - 응답에는 id, restored, matched, sha256, backup(검증 표시·version·해시·다시 읽은 시각), before, after, changes(칸 이름)만 넣고
+//   메모 내용은 넣지 않습니다. 감사 기록에도 내용과 토큰은 넣지 않습니다.
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { noteSha256 } from './content-hash.mjs';
@@ -87,18 +90,31 @@ export function createRestoreHandler(getDeps = loadDeps) {
       return;
     }
     try {
-      // 1. 사본: 로그인 사용자의 것만 찾습니다. 남의 사본과 없는 사본은 같은 404입니다.
-      const snapshot = checked(await supabase.from(SNAPSHOT)
-        .select('id, owner_id, title, content, created_at, content_sha256')
+      // 1. 사본: 로그인 사용자의 것만 찾습니다.
+      const readBackup = async () => checked(await supabase.from(SNAPSHOT)
+        .select('id, owner_id, title, content, created_at, content_sha256, snapshot_at')
         .eq('id', id).eq('owner_id', login.userId).maybeSingle());
-      if (!snapshot) {
-        await finish(404, { error: 'NOTE_NOT_FOUND' }, 'not_found');
+      const readMine = async () => checked(await supabase.from(NOTES)
+        .select('id, owner_id, title, content').eq('id', id).eq('owner_id', login.userId).maybeSingle());
+      const backup = await readBackup();
+      if (!backup) {
+        // 자기 메모가 지금 있는데 사본이 없으면 복원하지 않고 멈춥니다.
+        // 남의 메모와, 사본도 행도 없는 메모는 같은 404로 답해 있는지 없는지 드러내지 않습니다.
+        if (await readMine()) {
+          await finish(409, { error: 'BACKUP_MISSING', restored: false }, 'backup_missing', null, false);
+        } else {
+          await finish(404, { error: 'NOTE_NOT_FOUND' }, 'not_found');
+        }
         return;
       }
-      // 2. 사본 해시를 다시 계산해 대조합니다. 다르면 복원하지 않습니다.
-      const snapshotHash = noteSha256(snapshot.title, snapshot.content);
-      if (snapshotHash !== snapshot.content_sha256) {
-        await finish(409, { error: 'SNAPSHOT_HASH_MISMATCH' }, 'snapshot_hash_mismatch', snapshot.content_sha256, false);
+      const version = backup.snapshot_at ?? null;
+      // 2. 사본 해시를 다시 계산해 대조합니다. 다르면 복원하지 않고 멈춥니다.
+      const recomputed = noteSha256(backup.title, backup.content);
+      const stopUnverified = outcome => finish(409, {
+        error: 'BACKUP_VERIFICATION_FAILED', restored: false, backup: { verified: false, version },
+      }, outcome, backup.content_sha256, false);
+      if (recomputed !== backup.content_sha256) {
+        await stopUnverified('backup_verification_failed');
         return;
       }
       // 3. 지금 행: 있으면 주인이 로그인 사용자여야 합니다. 다르면 덮어쓰지 않고 같은 404입니다.
@@ -108,36 +124,58 @@ export function createRestoreHandler(getDeps = loadDeps) {
         await finish(404, { error: 'NOTE_NOT_FOUND' }, 'owner_mismatch');
         return;
       }
-      // 4. 한 건만 복원합니다.
+      const beforeSha = current ? noteSha256(current.title, current.content) : null;
+      // 4. 복원 직전에 사본을 한 번 더 읽어, 검증한 그 행(version·해시)이 그대로인지 확인합니다.
+      //    다르면 멈춥니다. 복원에는 다시 읽어 검증한 이 행만 씁니다.
+      const reread = await readBackup();
+      const rereadAt = new Date().toISOString();
+      if (!reread || (reread.snapshot_at ?? null) !== version || reread.content_sha256 !== backup.content_sha256
+          || noteSha256(reread.title, reread.content) !== backup.content_sha256) {
+        await stopUnverified('backup_changed');
+        return;
+      }
+      // 5. 한 건만 복원합니다. 바뀔 칸 이름만 남기고 내용은 남기지 않습니다.
       let outcome;
+      let changes;
       if (!current) {
         const { error } = await supabase.from(NOTES).insert({
-          id, owner_id: login.userId, title: snapshot.title, content: snapshot.content,
-          created_at: snapshot.created_at,
+          id, owner_id: login.userId, title: reread.title, content: reread.content,
+          created_at: reread.created_at,
         });
         if (error?.code === '23505') {
-          await finish(409, { error: 'RESTORE_CONFLICT' }, 'conflict', snapshotHash, false);
+          await finish(409, { error: 'RESTORE_CONFLICT', restored: false }, 'conflict', recomputed, false);
           return;
         }
         if (error) throw error;
         outcome = 'restored_deleted';
-      } else if (noteSha256(current.title, current.content) !== snapshotHash) {
-        checked(await supabase.from(NOTES).update({ title: snapshot.title, content: snapshot.content })
+        changes = ['row_restored'];
+      } else if (beforeSha !== recomputed) {
+        changes = ['title', 'content'].filter(key => current[key] !== reread[key]);
+        checked(await supabase.from(NOTES).update({ title: reread.title, content: reread.content })
           .eq('id', id).eq('owner_id', login.userId).select('id').maybeSingle());
         outcome = 'restored_modified';
       } else {
         outcome = 'already_matching';
+        changes = [];
       }
-      // 5. 다시 읽어 id·owner_id·해시를 사본과 대조합니다.
-      const after = checked(await supabase.from(NOTES)
-        .select('id, owner_id, title, content').eq('id', id).eq('owner_id', login.userId).maybeSingle());
-      const matched = Boolean(after) && after.id === snapshot.id && after.owner_id === snapshot.owner_id
-        && noteSha256(after.title, after.content) === snapshotHash;
+      const restored = changes.length > 0;
+      // 6. 다시 읽어 id·owner_id·해시를 사본과 대조합니다.
+      const after = await readMine();
+      const afterSha = after ? noteSha256(after.title, after.content) : null;
+      const matched = Boolean(after) && after.id === reread.id && after.owner_id === reread.owner_id
+        && afterSha === recomputed;
+      const body = {
+        id, restored, matched, sha256: recomputed,
+        backup: { verified: true, version, sha256: backup.content_sha256, recomputedSha256: recomputed, rereadAt },
+        before: { exists: Boolean(current), sha256: beforeSha },
+        after: { sha256: afterSha },
+        changes,
+      };
       if (!matched) {
-        await finish(500, { id, sha256: snapshotHash, matched: false }, 'verify_failed', snapshotHash, false);
+        await finish(500, body, 'verify_failed', recomputed, false);
         return;
       }
-      await finish(200, { id, sha256: snapshotHash, matched: true }, outcome, snapshotHash, true);
+      await finish(200, body, outcome, recomputed, true);
     } catch (error) {
       console.error('restores: 복구하지 못했습니다.', error?.code || 'unknown');
       await finish(502, { error: 'RESTORE_UNAVAILABLE' }, 'error');

@@ -15,6 +15,11 @@ const config = JSON.parse(readFileSync(new URL('../aleph.config.json', import.me
 const app = new URL(config.publicAppUrl);
 const TAMPER_MARK = '\n[restore-live-check 변조 시험]';
 const short = id => String(id).slice(0, 8);
+// 복구 응답의 검증 표시: backup.verified, 사본 해시와 다시 계산한 해시가 같음, 다시 읽은 시각, version이 있음.
+const verifiedBackup = data => data?.backup?.verified === true && typeof data.backup.version === 'string'
+  && data.backup.sha256 === data.backup.recomputedSha256 && data.backup.sha256 === data.sha256
+  && !Number.isNaN(Date.parse(data.backup.rereadAt ?? ''));
+const changesOf = data => (Array.isArray(data?.changes) ? data.changes : []);
 let chosenId = null;
 
 async function askEmail() {
@@ -102,8 +107,10 @@ async function main() {
 
     // 사본이 지금 내용과 같은지 먼저 봅니다. 다르면 아래 시험이 B의 정상 수정을 되돌리게 되므로 멈춥니다.
     const pre = await call('POST', `/api/restores/${id}`, { token });
-    const preSame = pre.status === 200 && pre.data?.sha256 === startHash && pre.data?.matched === true;
-    if (!record('사본과 지금 내용 일치(시험 전)', preSame, `HTTP ${pre.status}, 일치 ${preSame}`)) {
+    const preSame = pre.status === 200 && pre.data?.sha256 === startHash && pre.data?.matched === true
+      && verifiedBackup(pre.data) && pre.data.restored === false && changesOf(pre.data).length === 0;
+    if (!record('사본과 지금 내용 일치(시험 전)', preSame,
+      `HTTP ${pre.status}, 일치 ${preSame}, backup.verified ${pre.data?.backup?.verified}, restored ${pre.data?.restored}${pre.data?.error ? `, ${pre.data.error}` : ''}`)) {
       if (pre.status === 200 && pre.data?.sha256 !== startHash) state = 'tampered';
       return;
     }
@@ -117,8 +124,10 @@ async function main() {
     const restored1 = await call('POST', `/api/restores/${id}`, { token });
     const check1 = await currentHash(token, id);
     const same1 = check1.hash === startHash;
-    record('변조 뒤 복구', restored1.status === 200 && restored1.data?.matched === true && same1,
-      `HTTP ${restored1.status}, matched ${restored1.data?.matched}, 다시 읽기 HTTP ${check1.status}, 처음과 같음 ${same1}`);
+    record('변조 뒤 복구', restored1.status === 200 && restored1.data?.matched === true && same1
+      && verifiedBackup(restored1.data) && restored1.data.restored === true && changesOf(restored1.data).includes('content'),
+      `HTTP ${restored1.status}, matched ${restored1.data?.matched}, backup.verified ${restored1.data?.backup?.verified}, `
+      + `changes [${changesOf(restored1.data).join(',')}], 다시 읽기 HTTP ${check1.status}, 처음과 같음 ${same1}`);
     if (same1) state = 'clean';
 
     const removed = await call('DELETE', `/api/notes/${id}`, { token });
@@ -130,8 +139,10 @@ async function main() {
     const restored2 = await call('POST', `/api/restores/${id}`, { token });
     const check2 = await currentHash(token, id);
     const same2 = check2.hash === startHash;
-    record('삭제 뒤 복구', restored2.status === 200 && restored2.data?.matched === true && same2,
-      `HTTP ${restored2.status}, matched ${restored2.data?.matched}, 다시 읽기 HTTP ${check2.status}, 처음과 같음 ${same2}`);
+    record('삭제 뒤 복구', restored2.status === 200 && restored2.data?.matched === true && same2
+      && verifiedBackup(restored2.data) && restored2.data.restored === true && changesOf(restored2.data).includes('row_restored'),
+      `HTTP ${restored2.status}, matched ${restored2.data?.matched}, backup.verified ${restored2.data?.backup?.verified}, `
+      + `changes [${changesOf(restored2.data).join(',')}], 다시 읽기 HTTP ${check2.status}, 처음과 같음 ${same2}`);
     if (same2) state = 'clean';
 
     const anonymous = await call('POST', `/api/restores/${id}`);

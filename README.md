@@ -112,9 +112,27 @@
 - **복구 서버 함수**:
   - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다.
   - 사본의 `owner_id`가 로그인 사용자이고, 지금 행이 있으면 그 `owner_id`도 로그인 사용자여야 합니다. 아니면 남의 메모든 없는 메모든 같은 404 `NOTE_NOT_FOUND`입니다.
-  - 복원 전에 사본 해시를 다시 계산해 대조하고, 다르면 복원하지 않고 409 `SNAPSHOT_HASH_MISMATCH`로 멈춥니다.
-  - 지정한 한 건만 처리합니다. 변조됐으면 사본 내용으로 덮어쓰고, 삭제됐으면 같은 id·owner_id로 다시 넣고, 이미 같으면 쓰지 않습니다.
-  - 복원 뒤 행을 다시 읽어 id·owner_id·해시를 사본과 대조합니다. 응답은 `{id, sha256, matched}`뿐이고 메모 내용은 없습니다.
+  - **멈추는 경우** (복원하지 않고, 로그인한 요청이므로 감사 기록은 남김):
+    - 자기 메모가 지금 있는데 사본이 없으면 409 `{ error: "BACKUP_MISSING", restored: false }`
+    - 사본 해시를 다시 계산해 대조한 결과가 다르면 409 `{ error: "BACKUP_VERIFICATION_FAILED", restored: false, backup: { verified: false, version } }`
+    - 복원 직전에 사본을 한 번 더 읽어, 검증한 그 행(`version` = `snapshot_at`, 해시)과 다르면 같은 409 `BACKUP_VERIFICATION_FAILED`
+    - 남의 메모와, 사본도 행도 없는 메모는 같은 404 `NOTE_NOT_FOUND`
+  - 지정한 한 건만 처리합니다. 복원에는 복원 직전에 다시 읽어 검증한 사본 행만 씁니다. 변조됐으면 사본 내용으로 덮어쓰고, 삭제됐으면 같은 id·owner_id로 다시 넣고, 이미 같으면 쓰지 않습니다.
+  - 복원 뒤 행을 다시 읽어 id·owner_id·해시를 사본과 대조합니다.
+  - **성공 응답(200)**: 메모 내용은 넣지 않고 검증 과정만 보여 줍니다.
+
+    ```json
+    {
+      "id": "<메모 id>", "restored": true, "matched": true, "sha256": "<사본 해시, 이전 응답과 호환>",
+      "backup": { "verified": true, "version": "<snapshot_at>", "sha256": "<사본에 저장된 해시>",
+                  "recomputedSha256": "<사본을 다시 읽어 계산한 해시>", "rereadAt": "<복원 직전에 다시 읽은 시각>" },
+      "before": { "exists": true, "sha256": "<복원 전 지금 행 해시, 없으면 null>" },
+      "after": { "sha256": "<복원 뒤 다시 읽은 행 해시>" },
+      "changes": ["content"]
+    }
+    ```
+
+    `changes`는 바뀐 칸 이름(`title`, `content`)이고, 삭제된 메모를 다시 넣었으면 `["row_restored"]`, 이미 같으면 `[]`와 `restored: false`입니다.
 - **내용 해시**: `SHA-256( UTF-8(title) + 0x00 바이트 + UTF-8(content) )`의 소문자 16진수 64자입니다. Postgres는 `public.vault_note_sha256(title, content)`, JS는 `src/content-hash.mjs`의 `noteSha256(title, content)`로 같은 값을 냅니다. Postgres의 text에는 0x00이 없어서 제목·본문 경계가 섞이지 않습니다. 유니코드 정규화는 하지 않습니다. 한글 예시로 두 쪽 결과가 같은지 확인했습니다(PostgreSQL 16 PGlite, 로컬).
 - **사본과 감사 기록** (`supabase/restore.sql`):
   - `vault_notes_snapshot`: `vault_notes`의 칸(`id`, `owner_id`, `title`, `content`, `created_at`)에 `content_sha256`, `snapshot_at`을 더했습니다. `id`는 primary key(unique)입니다.
@@ -145,12 +163,12 @@
 
 - **실제 배포 복구 확인** `npm run restore:live-check` (학생이 Claude Code 밖의 자기 터미널에서 실행):
   - B 이메일과 비밀번호를 실행할 때 묻습니다. 비밀번호는 화면에 보이지 않고, 둘 다 파일·로그에 남지 않습니다. 로그인은 앱의 `POST /api/auth/login`으로 하므로 publishable key는 필요 없습니다.
-  - 순서: B 로그인 → B 메모 목록의 첫 메모 하나 고르기 → 해시 기록 → 사본과 지금 내용이 같은지 먼저 확인(다르면 멈추고 처음 내용으로 되돌림) → 앱 API로 변조(PUT) → 복구 → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 복구 → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
+  - 순서: B 로그인 → B 메모 목록의 첫 메모 하나 고르기 → 해시 기록 → 사본과 지금 내용이 같은지 먼저 확인(다르면 멈추고 처음 내용으로 되돌림) → 앱 API로 변조(PUT) → 복구(`backup.verified` true, `changes`에 `content`) → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 복구(`backup.verified` true, `changes`에 `row_restored`) → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
   - 출력은 상태 코드, 일치 여부, id 앞 8자뿐입니다. 메모 제목·내용, 해시, 토큰, 이메일은 출력하지 않습니다. B 로그인으로 보이는 B 메모 한 건만 쓰고 A 메모는 건드리지 않습니다. 시험이 중간에 멈추면 복구를 한 번 더 부르고, 그래도 안 되면 메모리에 둔 처음 내용으로 다시 씁니다.
   - 정상: `모두 통과 (10개)`. 거부되어야 할 결과: `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
-  - **실제 결과** (2026-10-14, 배포 커밋 `b613f24`, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. B 로그인 200, B 메모 목록 200(1건), 처음 읽기 200, 시험 전 사본 일치 true, PUT 변조 200(내용이 처음과 다름 true), 변조 뒤 복구 200·matched true·처음과 같음 true, DELETE 200·삭제 뒤 GET 404, 삭제 뒤 복구 200·matched true·처음과 같음 true, 로그인 없이 복구 401, 없는 id 복구 404, 로그아웃 200.
+  - **실제 결과** (2026-10-14, 배포 커밋 `b613f24`, 학생이 자기 터미널에서 실행, 응답 검증 칸을 더하기 전 버전): `모두 통과 (10개)`. B 로그인 200, B 메모 목록 200(1건), 처음 읽기 200, 시험 전 사본 일치 true, PUT 변조 200(내용이 처음과 다름 true), 변조 뒤 복구 200·matched true·처음과 같음 true, DELETE 200·삭제 뒤 GET 404, 삭제 뒤 복구 200·matched true·처음과 같음 true, 로그인 없이 복구 401, 없는 id 복구 404, 로그아웃 200.
 - **로컬 확인 순서** (로컬 시험이며 배포된 API나 심판 판정이 아닙니다):
-  1. `npm run test:restore`: 아홉 줄 모두 `✔`(B 변조·삭제 복구, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 해시 불일치 409, 다른 메모·감사 기록 보존)
+  1. `npm run test:restore`: 열두 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존)
   2. `npm run policy:diff`: `사본 검증 통과`와 `지금 파일과 다른 항목이 없습니다.`
   3. 거부되어야 할 결과가 200으로 나오면 `src/restore-api.mjs`의 주인 조건을 확인합니다.
 
