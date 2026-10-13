@@ -67,5 +67,13 @@ function stageFields(config) {
     }
     fields.originalApiUrl = config.originalApiUrl;
   }
+  // 10단계 복구 경로(학생 설계, 계약에 없음): ROUTE 형식이고 allowedRoutes에 있을 때만 /aleph.json에 옮깁니다.
+  if (config.restoreRoute !== undefined && config.restoreRoute !== null) {
+    if (typeof config.restoreRoute !== 'string' || !ROUTE.test(config.restoreRoute)
+        || !Array.isArray(config.allowedRoutes) || !config.allowedRoutes.includes(config.restoreRoute)) {
+      throw new Error('aleph.config.json의 restoreRoute는 "POST /api/..." 같은 경로 문자열이고 allowedRoutes에도 있어야 합니다.');
+    }
+    fields.restoreRoute = config.restoreRoute;
+  }
   return fields;
 }

@@ -174,7 +174,7 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step >= 5 && config.step <= 9) {
+  if (config.step >= 5 && config.step <= 10) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -225,10 +225,9 @@ export async function runAttackChecks(config) {
         observed: `가짜 토큰으로 GET /api/notes: ${await describe(forged)}` },
       { attackId: 'public_files_key_scan', expected: '화면과 공개 파일에 sb_publishable_·sb_secret_·시드 메모 문장이 0건',
         observed: `${statuses.join(', ')} 검사: sb_publishable_ ${counts.publishable}건, sb_secret_ ${counts.secret}건, 시드 메모 문장 ${counts.seed}건` },
-      { attackId: 'anon_original_api_read', expected: 'anon 키로 originalApiUrl 읽기가 권한 없음(42501)으로 거부됨',
-        observed: dataRead },
-      { attackId: 'anon_original_api_insert', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
-        observed: dataInsert },
+      // 10단계에서 점검 상한(20개) 때문에 읽기·쓰기 두 점검을 한 줄로 합쳤습니다. 보내는 요청 두 건은 그대로입니다.
+      { attackId: 'anon_original_api_read_write', expected: 'anon 키로 originalApiUrl 읽기·쓰기가 모두 권한 없음(42501)으로 거부됨',
+        observed: dataRead === dataInsert ? dataRead : `${dataRead} / ${dataInsert}` },
     ];
     if (config.step >= 6) {
       // 6단계: 로컬 판정기에 가상 요청을 넣은 실제 응답만 기록합니다. 반 엔진이나 심판의 판정이 아닙니다.
@@ -252,10 +251,9 @@ export async function runAttackChecks(config) {
       if (config.step >= 7) {
         // 7단계: 복합 이상 가상 사건, 추가 인증 뒤 다시 판정, 계약에 없는 출처의 접속 신호를 넣어 봅니다.
         checks.push(
-          { attackId: 'decider_unusual_access_step_up', expected: '평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 step_up·step_up_required',
-            observed: `로컬 판정기 응답: ${await answer(suspicious)}` },
-          { attackId: 'decider_step_up_verified_retry', expected: '같은 가상 사건에 엔진의 추가 인증(stepUp verified, 60초)이 붙으면 다시 판정해 allow',
-            observed: `로컬 판정기 응답: ${await answer({ ...suspicious, stepUp: { verified: true, authAgeSeconds: 60 } })}` },
+          // 10단계에서 점검 상한 때문에 복합 이상과 추가 인증 뒤 재판정을 한 줄로 합쳤습니다(가상 요청 두 건은 그대로).
+          { attackId: 'decider_step_up_and_verified_retry', expected: '평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 step_up·step_up_required, 같은 사건에 엔진의 추가 인증(stepUp verified, 60초)이 붙으면 다시 판정해 allow',
+            observed: `로컬 판정기 응답: 추가 인증 전 ${await answer(suspicious)}, 추가 인증 뒤 ${await answer({ ...suspicious, stepUp: { verified: true, authAgeSeconds: 60 } })}` },
           { attackId: 'decider_forged_signal_source', expected: '계약에 없는 출처(client_header)의 정상처럼 보이는 접속 신호는 믿지 않고 step_up',
             observed: `로컬 판정기 응답: ${await answer({ ...normal,
               signals: { source: 'client_header', region: 'local', network: 'usual', hour: 14 } })}` },
@@ -273,13 +271,12 @@ export async function runAttackChecks(config) {
           { attackId: 'decider_zone_notice_update', expected: '공지 수정 PUT /notices/:id는 강사 역할 계약이 없어 deny·instructor_role_contract_missing',
             observed: `로컬 판정기 응답: ${await answer({ ...normal, service: 'notices', method: 'PUT',
               route: 'PUT /notices/:id', path: '/notices/week3' })}` },
-          { attackId: 'decider_zone_unknown_route', expected: '구역 표에 없는 GET /notes/:id/export는 deny·starter_not_ready',
-            observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes/:id/export', path: '/notes/demo/export' })}` },
+          // 10단계에서 점검 상한 때문에 모르는 경로와 :id 자리 기능 이름을 한 줄로 합쳤습니다(가상 요청 두 건은 그대로).
+          { attackId: 'decider_zone_unknown_route_and_function_segment', expected: '구역 표에 없는 GET /notes/:id/export와 :id 자리에 기능 이름이 온 GET /notes/export는 모두 deny·starter_not_ready',
+            observed: `로컬 판정기 응답: /notes/:id/export ${await answer({ ...normal, route: 'GET /notes/:id/export', path: '/notes/demo/export' })}, /notes/export ${await answer({ ...normal, path: '/notes/export' })}` },
           { attackId: 'decider_zone_query_function', expected: '쿼리로 기능을 고르는 GET /notes?…는 deny·starter_not_ready',
             observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes', path: '/notes',
               queryLength: query.length, querySha256: createHash('sha256').update(query).digest('hex') })}` },
-          { attackId: 'decider_zone_function_segment', expected: ':id 자리에 기능 이름이 온 GET /notes/export는 deny·starter_not_ready',
-            observed: `로컬 판정기 응답: ${await answer({ ...normal, path: '/notes/export' })}` },
           { attackId: 'decider_zone_note_list', expected: '메모 전체 목록 GET /notes는 구역 표에 없어 deny·starter_not_ready',
             observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes', path: '/notes' })}` },
           { attackId: 'decider_zone_notice_delete', expected: '공지 삭제 DELETE /notices/:id도 deny·instructor_role_contract_missing',
@@ -309,6 +306,30 @@ export async function runAttackChecks(config) {
           { attackId: 'detector_threshold_and_mixed', expected: '정확히 120건과 서로 다른 사용자 각 100건은 observe',
             observed: `로컬 탐지기 결과: 120건 ${detected(reads(120, 'learner_fixture'))}, 다른 사용자 각 100건 ${detected([
               ...reads(100, 'learner_fixture'), ...reads(100, 'other_fixture')])}` },
+        );
+      }
+      if (config.step >= 10) {
+        // 10단계(학생 설계, 계약에 없음): 배포된 복구 경로에 실제로 보낸 요청과 로컬 정책 사본 검증 결과만 기록합니다.
+        const restorePath = `/api/restores/${crypto.randomUUID()}`;
+        const anonymousRestore = await get(app, restorePath, { method: 'POST' });
+        const forgedRestore = await get(app, restorePath, {
+          method: 'POST', headers: { Authorization: `Bearer ${forgedToken(config)}` },
+        });
+        let policy;
+        try {
+          const { verifiedManifest, differences } = await import('../scripts/policy.mjs');
+          const manifest = verifiedManifest();
+          policy = `사본 검증 통과(커밋 ${manifest.commit.slice(0, 7)}, 파일 ${manifest.files.length}개), 지금 파일과 다른 항목 ${differences(manifest).length}개`;
+        } catch (error) {
+          policy = `사본 검증 실패: ${String(error?.message).slice(0, 80)}`;
+        }
+        checks.push(
+          { attackId: 'restore_without_login', expected: '로그인 없이, 또는 서명 없는 가짜 토큰으로 POST /api/restores/:id는 401 JSON으로 거부됨',
+            observed: `로그인 없이 ${await describe(anonymousRestore)} / 가짜 토큰 ${await describe(forgedRestore)}` },
+          { attackId: 'restore_policy_snapshot', expected: '정책 사본(policy/manifest.json)의 sha256이 사본 파일과 맞고, 지금 정책 파일과 다른 항목이 0개',
+            observed: `로컬 npm run policy:diff와 같은 검사: ${policy}` },
+          { attackId: 'restore_owner_flow_live', expected: 'B가 자기 메모를 변조·삭제한 뒤 복구하면 처음 해시와 같고, 없는 id는 404',
+            observed: '미실행: B 계정 비밀번호가 필요해 제출 묶음에서는 보내지 않음. 학생이 터미널에서 npm run restore:live-check로 직접 확인' },
         );
       }
     }

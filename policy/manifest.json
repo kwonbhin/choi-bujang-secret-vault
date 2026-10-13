@@ -1,0 +1,37 @@
+{
+  "schema": "aleph.student.policy-snapshot.v1",
+  "commit": "23fce0dd347ff7fa017402d2845bae46f543f300",
+  "subject": "9단계: README 탐지기 한계 두 줄 (중복 사건, 대문자 GET만)",
+  "files": [
+    {
+      "path": "src/decider.mjs",
+      "copy": "files/src/decider.mjs.snapshot",
+      "sha256": "a7de40b2b649ee2409c8b2e7ef33e813c49980a6727a1452b6191523529131b9",
+      "bytes": 8425
+    },
+    {
+      "path": "supabase/notes.sql",
+      "copy": "files/supabase/notes.sql.snapshot",
+      "sha256": "32800c7e02372c44a77ac4f054126e6c99d043b8231e7548c0e1ac4061046c4c",
+      "bytes": 1177
+    },
+    {
+      "path": "supabase/notes-write-grants.sql",
+      "copy": "files/supabase/notes-write-grants.sql.snapshot",
+      "sha256": "5199dedad541b25883962cdbafd6191e78da84711500645abd0acad32fdd6dde",
+      "bytes": 1451
+    },
+    {
+      "path": "supabase/notes-rls.sql",
+      "copy": "files/supabase/notes-rls.sql.snapshot",
+      "sha256": "4d920e4192d396177c5ee4ca01cd687bfbcd34d6f2e32833767b3b4835ada405",
+      "bytes": 5609
+    },
+    {
+      "path": "supabase/notes-revoke-direct.sql",
+      "copy": "files/supabase/notes-revoke-direct.sql.snapshot",
+      "sha256": "36b39deeb5ed7be0e5634bef78558ba662194231be9db21b485db6e7bfb9a5b5",
+      "bytes": 5065
+    }
+  ]
+}
