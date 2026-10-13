@@ -1,4 +1,4 @@
-# BYTE BACK 방어전 자료실 (현재 5단계)
+# BYTE BACK 방어전 자료실 (현재 6단계)
 
 1단계 시작 틀 R5로 만든 학생 본인의 자료실입니다. 메모는 모두 실습을 위한 가상 자료입니다. 실제 학생 자료, 비밀번호, 토큰, 서버 전용 키를 코드·Git·제출 묶음에 넣지 마세요.
 
@@ -39,6 +39,18 @@
 - **토큰 보관**: access token은 화면 메모리 변수에만 두고 브라우저 저장소에 쓰지 않습니다. refresh token은 응답 본문에 넣지 않고 `HttpOnly; Secure; SameSite=Strict; Path=/api/auth` 쿠키로만 둡니다. 화면 스크립트가 읽을 수 없어 XSS로 빼 가기 어렵고, 다른 사이트의 요청에는 실리지 않습니다. 새로고침하면 쿠키로 로그인을 되살리고, 만료 1분 전에 자동 갱신합니다.
 - **4단계에서 이어진 방어**: 메모 API의 소유자 검사(남의 메모와 없는 메모는 같은 404), `vault_notes`의 RLS 본인 행 정책 4개는 그대로입니다. 정책은 직접 권한을 회수한 지금은 쓰이지 않지만, 실수로 authenticated 권한이 되살아나도 본인 행만 열리도록 남겨 두었습니다.
 
+## 6단계: 등록한 기기만 자료실에 들어옵니다
+
+- **판정기 규칙 `device_registered`** (`src/decider.mjs`): `request.deviceRegistered`가 `true`가 아니면 `deny`·`device_not_registered`입니다. 등록 기기의 메모 읽기(`method`가 `GET`, `service`가 `notes`, `route`가 `GET /notes` 또는 `GET /notes/:id`)만 `allow`·`approved`이고, 그 밖의 요청은 시작 틀의 `starter.deny`로 거부합니다.
+- **경로는 계약 표기로 봅니다.** 엔진이 넘기는 `route`는 `GET /notes/:id`처럼 `/api` 없이 오고 서비스는 `service: "notes"`로 따로 옵니다(`docs/DECIDER_REQUEST.md`). `aleph.config.json`의 `allowedRoutes`(`GET /api/notes/:id`)는 배포 경로 표기라 문자열이 맞지 않으므로 판정기에서 비교하지 않습니다.
+- **`deviceRegistered`는 정확히 `true`일 때만 등록입니다.** `"true"`, `1`, 값 없음처럼 형식이 틀린 값을 등록으로 잘못 읽으면 미등록 기기가 들어오므로, 확실한 경우만 허용하고 나머지는 거부합니다.
+- **기기-사용자 짝 검사는 엔진이 맡습니다.** 계약에는 `subjectId`와 `deviceId`를 묶는 값이 없습니다. 판정기에 임의의 짝 표를 만들지 않고, 엔진이 신원·기기를 확인한 뒤 넘긴 값만 씁니다.
+- **확인 순서** (로컬 가상 요청 연습이며 심판 판정이 아닙니다. 따로 설치할 접속 프로그램은 없고, 실제 미등록 기기 공격은 심판이 맡습니다):
+  1. `npm ci` (처음 한 번)
+  2. `npm run decider:test`
+  3. 정상: `통과 · 등록 기기의 정상 요청` (등록 기기의 `GET /notes/:id` → `allow`·`approved`)
+  4. 거부되어야 할 결과: `통과 · 미등록 기기의 가상 요청` (`deviceRegistered: false` → `deny`·`device_not_registered`). "확인 필요"가 나오면 첫 줄만 보고 `src/decider.mjs`를 고칩니다.
+
 ## 남은 약점과 한계
 
 - **POST 409로 id 사용 여부가 드러납니다.** 이미 있는 id로 POST하면 남의 메모여도 409 `NOTE_ID_TAKEN`입니다. 내용은 드러나지 않지만 그 id가 쓰이고 있다는 사실은 알 수 있습니다. 클라이언트가 id를 정하는 `POST {id,…}` 형식을 유지해서 남긴 한계입니다.
@@ -76,8 +88,8 @@
    `*.local.sql`이 없으면 3·4번 대신 화면에서 로그인해 메모를 추가합니다. 대조 조회가 있는 파일은 구역 [1]·[2]·[3]을 각각 선택해 실행하면 적용 전후 권한을 비교할 수 있습니다.
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
 3. `main`에 push하면 Vercel이 배포합니다. `/aleph.json`의 `step`과 `commit`으로 배포된 커밋을 확인합니다.
-4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`. 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
-5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
+4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`. 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
+5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를 기록합니다(반 엔진 판정 아님). 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
    - Git Bash: `SUPABASE_PUBLISHABLE_KEY=<publishable key> npm run bundle`
    - PowerShell: `$env:SUPABASE_PUBLISHABLE_KEY='<publishable key>'; npm run bundle; Remove-Item Env:SUPABASE_PUBLISHABLE_KEY`
 
@@ -87,7 +99,9 @@
 - **2단계 (`029641b`)**: 메모를 Supabase `vault_notes`로 옮기고 공개 `data.json`을 지웠습니다. 화면은 서버 함수 `/api/notes`로 읽었지만, 이 함수에 로그인 확인이 없어 누구나 읽을 수 있었습니다.
 - **3단계 (`a31fb32`, `a29bc06`, `d5109ff`, 저장점 `02a6c4b`)**: 로그인·로그아웃 화면, 토큰 검사가 붙은 자료 API, 로그인 사용자의 메모 추가·수정·삭제를 붙였습니다. 이때는 소유자 검사가 없어 B가 A의 메모를 고칠 수 있었습니다.
 - **4단계 (`223faf0`, `ec093bc`, 저장점 `ddd8e80`)**: API 소유자 검사와 404 존재 숨김, `vault_notes` RLS 본인 행 정책 4개와 최소 권한을 붙였습니다.
-- **5단계 (`b11b79c`, `85e9eb9`, 이 저장점)**: `vault_notes` 직접 권한 회수와 `originalApiUrl`, 로그인·토큰 갱신·로그아웃의 서버 함수 이전, 화면에서 공개 키 제거.
+- **5단계 (`b11b79c`, `85e9eb9`, 저장점 `dc6225e`, 보충 `2fad6e1`, `684f4a3`)**: `vault_notes` 직접 권한 회수와 `originalApiUrl`, 로그인·토큰 갱신·로그아웃의 서버 함수 이전, 화면에서 공개 키 제거. 저장점 뒤에 `/aleph.json`에 `originalApiUrl`·`allowedRoutes`·`identityProvider`를 기록했습니다.
+- **보너스 (`c4f3df2` xdr-01, `cfd64cc` xdr-02)**: `xdr/brute-force`, `xdr/web-injection` 경보 판단. 판정기에는 연결하지 않았습니다.
+- **6단계 (이 저장점)**: 판정기 규칙 `device_registered`. 등록 기기의 메모 읽기만 허용하고, 미등록 기기는 `deny`·`device_not_registered`로 거부합니다.
 
 ## 가상 메모 문장 검색 절차
 

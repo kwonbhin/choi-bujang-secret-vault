@@ -174,7 +174,7 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step === 5) {
+  if (config.step === 5 || config.step === 6) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -218,7 +218,7 @@ export async function runAttackChecks(config) {
       dataRead = 'aleph.config.json에 originalApiUrl이 없어 미실행';
       dataInsert = dataRead;
     }
-    return [
+    const checks = [
       { attackId: 'anonymous_api_list', expected: '로그인 없이 GET /api/notes는 401 JSON으로 거부되고 메모 없음',
         observed: `로그인 없이 GET /api/notes: ${await describe(list)}` },
       { attackId: 'forged_token_read', expected: '서명이 없는 가짜 토큰으로 GET /api/notes는 401 JSON으로 거부됨',
@@ -230,6 +230,27 @@ export async function runAttackChecks(config) {
       { attackId: 'anon_original_api_insert', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
         observed: dataInsert },
     ];
+    if (config.step === 6) {
+      // 6단계: 로컬 판정기에 가상 요청을 넣은 실제 응답만 기록합니다. 반 엔진이나 심판의 판정이 아닙니다.
+      const { fixtureRequests } = await import('../scripts/fixture-7.mjs');
+      const { decide } = await import('./decider.mjs');
+      const { normal } = fixtureRequests();
+      const answer = async request => {
+        try {
+          const response = await decide(request);
+          return `${response?.decision}·${response?.reasonCode} (규칙 ${Array.isArray(response?.ruleIds) ? response.ruleIds.join(',') : '없음'})`;
+        } catch (error) {
+          return `판정기 오류: ${String(error?.message).slice(0, 80)}`;
+        }
+      };
+      checks.push(
+        { attackId: 'decider_registered_device_read', expected: '로컬 판정기에 등록 기기(deviceRegistered: true)의 GET /notes/:id 가상 요청을 넣으면 allow',
+          observed: `로컬 판정기 응답: ${await answer(normal)}` },
+        { attackId: 'decider_unregistered_device', expected: '로컬 판정기에 미등록 기기(deviceRegistered: false) 가상 요청을 넣으면 deny·device_not_registered',
+          observed: `로컬 판정기 응답: ${await answer({ ...normal, deviceRegistered: false })}` },
+      );
+    }
+    return checks;
   }
   throw new Error('이 단계의 공격 점검을 src/attack-check.mjs에 구현해 주세요.');
 }
