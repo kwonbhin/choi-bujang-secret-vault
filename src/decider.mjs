@@ -1,10 +1,48 @@
 // ALEPH SDP 엔진이 확인한 요청만 받는 학생 판정기 시작점입니다.
 // 6단계부터 규칙을 하나씩 추가합니다. 어느 규칙에도 맞지 않으면 기본 응답으로 거부합니다.
 // 요청 본문의 userId, role, 기기 키, 토큰을 별도로 믿거나 저장하지 마세요.
-export const RULE_IDS = Object.freeze(['starter.deny', 'device_registered', 'step_up_required']);
+export const RULE_IDS = Object.freeze([
+  'starter.deny', 'device_registered', 'step_up_required',
+  'zone_note_read', 'zone_note_update', 'zone_notice_update',
+]);
 
-// 계약의 route 표기(`GET /notes/:id`)로 본 메모 읽기 경로입니다. allowedRoutes(`/api/...`)와는 표기가 다릅니다.
-const NOTE_READ_ROUTE = /^GET \/notes(?:\/:id)?$/u;
+// 8단계 구역: 계약의 정확한 route 표기만 받습니다. allowedRoutes(`/api/...`)와는 표기가 다릅니다.
+// 자원 ID는 종류를 앞에 붙여 메모(note:<id>)와 강사 공지(notice:<id>)를 구별합니다.
+// 메모 주인은 판정기가 정하지 않습니다. 가명 subjectId를 owner_id와 비교하지 않고, 주인 검사는
+// API(/api/notes의 owner_id 조건, 남의 메모는 404)가 맡습니다.
+// 강사 역할은 계약에 없으므로 누구도 강사로 보지 않습니다. 공지 수정은 항상 거부합니다.
+export const RESOURCE_KINDS = Object.freeze({
+  note: Object.freeze({ service: 'notes', prefix: '/notes' }),
+  notice: Object.freeze({ service: 'notices', prefix: '/notices' }),
+});
+const ZONES = Object.freeze({
+  'GET /notes': { kind: 'note', item: false, ruleId: 'zone_note_read' },
+  'GET /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_read' },
+  'PUT /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_update' },
+  'PUT /notices/:id': { kind: 'notice', item: true, ruleId: 'zone_notice_update',
+    deny: 'instructor_role_contract_missing' },
+});
+// 자료 ID 모양입니다. 점·슬래시·% 인코딩은 받지 않습니다.
+const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+// :id 자리에 기능 이름이 오면 자료 ID로 보지 않습니다. 기능은 쿼리나 같은 깊이의 경로로 고르지 않습니다.
+const FUNCTION_SEGMENTS = new Set(['export', 'import', 'download', 'upload', 'backup', 'dump', 'all',
+  'bulk', 'admin', 'search', 'query', 'share', 'copy', 'raw', 'list', 'delete', 'edit', 'update']);
+
+// 요청의 자원을 정합니다. 정확한 route·method·service·path가 맞고 쿼리가 없을 때만 돌려주고, 그 밖에는 null입니다.
+export function resourceOf(request) {
+  if (typeof request.route !== 'string' || !Object.hasOwn(ZONES, request.route)) return null;
+  const zone = ZONES[request.route];
+  const kind = RESOURCE_KINDS[zone.kind];
+  const [method] = request.route.split(' ');
+  if (request.method !== method || request.service !== kind.service) return null;
+  if (request.queryLength !== 0) return null;
+  if (typeof request.path !== 'string') return null;
+  if (!zone.item) return request.path === kind.prefix ? { ...zone, id: null, resourceId: `${zone.kind}:*` } : null;
+  if (!request.path.startsWith(`${kind.prefix}/`)) return null;
+  const id = request.path.slice(kind.prefix.length + 1);
+  if (!RESOURCE_ID.test(id) || FUNCTION_SEGMENTS.has(id.toLowerCase())) return null;
+  return { ...zone, id, resourceId: `${zone.kind}:${id}` };
+}
 
 // 계약에 나온 signals.source 두 값만 압니다. 그 밖의 출처는 신뢰하는 접속 정보로 쓰지 않습니다.
 const KNOWN_SOURCES = new Set(['none', 'judge_fixture']);
@@ -15,12 +53,12 @@ const BURST_WINDOW_SECONDS = 600; // 최근 10분 안의 사건만 셉니다.
 const BURST_COUNT = 10; // 그 안에 이만큼 넘게 몰리면 갑자기 많은 읽기로 봅니다.
 const STEP_UP_MAX_AGE_SECONDS = 300; // 추가 인증 뒤 5분 안의 요청만 다시 확인된 것으로 봅니다.
 
-const respond = (request, decision, reasonCode, ruleId) => ({
+const respond = (request, decision, reasonCode, ruleIds) => ({
   schema: 'aleph.decision.v1',
   requestId: request.requestId,
   decision,
   reasonCode,
-  ruleIds: [ruleId],
+  ruleIds: [ruleIds].flat(),
 });
 
 const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,9 +105,14 @@ export async function decide(request) {
   if (request.deviceRegistered !== true) {
     return respond(request, 'deny', 'device_not_registered', 'device_registered');
   }
-  if (!(request.method === 'GET' && request.service === 'notes'
-      && typeof request.route === 'string' && NOTE_READ_ROUTE.test(request.route))) {
+  // 구역: 표에 있는 정확한 경로가 아니거나, 쿼리가 붙었거나, :id 자리에 기능 이름이 오면 시작 틀 규칙으로 거부합니다.
+  const resource = resourceOf(request);
+  if (!resource) {
     return respond(request, 'deny', 'starter_not_ready', RULE_IDS[0]);
+  }
+  // zone_notice_update: 강사 역할 계약이 없어 누구도 강사로 보지 않으므로 공지 수정은 항상 거부합니다.
+  if (resource.deny) {
+    return respond(request, 'deny', resource.deny, resource.ruleId);
   }
   // step_up_required: 평소와 다른 시각 + 처음 보는 네트워크 + 갑자기 많은 읽기가 함께 보이면 추가 확인을 요청합니다.
   // 접속 신호나 사건의 출처·형식을 믿을 수 없을 때도 정상으로 보지 않고 추가 확인을 요청합니다.
@@ -83,5 +126,6 @@ export async function decide(request) {
   if ((!signals.trusted || burst === null || unusualAccess) && !freshStepUp(request.stepUp)) {
     return respond(request, 'step_up', 'step_up_required', 'step_up_required');
   }
-  return respond(request, 'allow', 'approved', 'device_registered');
+  // 메모 읽기·수정 구역의 경로상 허용입니다. 그 메모가 요청한 사람의 것인지는 API가 owner_id로 다시 검사합니다.
+  return respond(request, 'allow', 'approved', ['device_registered', resource.ruleId]);
 }

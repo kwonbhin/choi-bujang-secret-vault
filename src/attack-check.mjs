@@ -174,7 +174,7 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step >= 5 && config.step <= 7) {
+  if (config.step >= 5 && config.step <= 8) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -261,6 +261,25 @@ export async function runAttackChecks(config) {
               signals: { source: 'client_header', region: 'local', network: 'usual', hour: 14 } })}` },
           { attackId: 'relay_step_up_data_block', expected: '실제 릴레이가 추가 확인 전 /api/notes 자료를 막고 재로그인 뒤 다시 판정함',
             observed: '미실행: 실제 재로그인·자료 차단은 반 엔진이 맡고, 이 저장소의 api/는 판정기를 부르지 않아 학생이 직접 보낼 수 없음' },
+        );
+      }
+      if (config.step >= 8) {
+        // 8단계: 구역 규칙에 가상 요청을 넣은 실제 응답만 기록합니다. 메모 주인은 판정기가 아니라 API가 검사합니다.
+        const { createHash } = await import('node:crypto');
+        const query = 'fn=export';
+        checks.push(
+          { attackId: 'decider_zone_note_update', expected: '등록 기기의 PUT /notes/:id 가상 요청은 경로상 allow (주인 검사는 API의 owner_id 404)',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, method: 'PUT', route: 'PUT /notes/:id' })}` },
+          { attackId: 'decider_zone_notice_update', expected: '공지 수정 PUT /notices/:id는 강사 역할 계약이 없어 deny·instructor_role_contract_missing',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, service: 'notices', method: 'PUT',
+              route: 'PUT /notices/:id', path: '/notices/week3' })}` },
+          { attackId: 'decider_zone_unknown_route', expected: '구역 표에 없는 GET /notes/:id/export는 deny·starter_not_ready',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes/:id/export', path: '/notes/demo/export' })}` },
+          { attackId: 'decider_zone_query_function', expected: '쿼리로 기능을 고르는 GET /notes?…는 deny·starter_not_ready',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, route: 'GET /notes', path: '/notes',
+              queryLength: query.length, querySha256: createHash('sha256').update(query).digest('hex') })}` },
+          { attackId: 'decider_zone_function_segment', expected: ':id 자리에 기능 이름이 온 GET /notes/export는 deny·starter_not_ready',
+            observed: `로컬 판정기 응답: ${await answer({ ...normal, path: '/notes/export' })}` },
         );
       }
     }
