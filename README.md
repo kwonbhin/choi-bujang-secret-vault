@@ -1,4 +1,4 @@
-# BYTE BACK 방어전 자료실 (현재 8단계)
+# BYTE BACK 방어전 자료실 (현재 9단계)
 
 1단계 시작 틀 R5로 만든 학생 본인의 자료실입니다. 메모는 모두 실습을 위한 가상 자료입니다. 실제 학생 자료, 비밀번호, 토큰, 서버 전용 키를 코드·Git·제출 묶음에 넣지 마세요.
 
@@ -89,6 +89,18 @@
   2. `npm run bundle`의 8단계 점검: 메모 수정은 `allow`, 공지 수정·삭제는 `deny`·`instructor_role_contract_missing`, 메모 전체 목록·모르는 경로·쿼리 기능·`/notes/export`는 `deny`·`starter_not_ready`로 기록됩니다.
   3. 거부되어야 할 결과가 `allow`로 나오면 `src/decider.mjs`의 `ZONES`와 `resourceOf`를 확인합니다.
 
+## 9단계: 도플갱어를 찾고 권한을 거둡니다
+
+- **탐지기 `src/detect.mjs`** (계약 `docs/DETECT_EVENTS.md`, 시험 `scripts/detect-test.mjs`): 사건마다 계약의 `at`, `method`, `identity.sub` 세 값만 읽습니다. 메모 내용·토큰·실명 같은 다른 칸은 읽지도 저장하지도 출력하지도 않고, 형식이 틀린 사건은 세지 않습니다.
+- **탐지 규칙 `burst_read`**: 같은 `identity.sub`의 `GET` 사건이 어느 10분 구간에서든 120건을 넘을 때만 `{ action: 'propose_revocation', reasonCode: 'burst_read', subject: <sub> }`, 그 밖에는 `{ action: 'observe' }`입니다. 정확히 120건, 다른 사용자의 사건 합산, 10분 밖으로 흩어진 사건(정확히 10분 떨어진 사건 포함)은 제안하지 않습니다. 여러 사용자가 넘으면 가장 먼저 넘은 한 명만 제안합니다.
+- **과제 화면 문구와 계약이 다릅니다. 계약을 따랐습니다.** 화면은 "낯선 네트워크 + 다량 조회일 때만, 대상은 가상 기기 한 개"라고 하지만, 계약의 사건에는 네트워크·지역·기기·판정 칸이 없고, 회수 대상은 `subject`(가명 사용자)이며, 다량 조회만으로 제안합니다(121건 시험). 계약에 없는 칸을 지어내면 반 엔진이 보내는 사건과 맞지 않고 `npm run detect:test`도 실패하므로 만들지 않았습니다. 기준값 "10분 120건 초과"도 계약값이며, 7단계 판정기의 "10분 10건 초과"와 다른 값입니다.
+- **제안만 하고 집행하지 않습니다.** 회수 API를 만들지 않았고 기기·사용자 권한을 바꾸지 않습니다. 판정기의 응답 형식과 규칙은 그대로입니다. 운영 반 엔진이 검증한 사건 전달과 회수 집행은 이 저장소와 연결되지 않았습니다.
+- **확인 순서** (가상 사건 연습이며 실제 접속 회수나 심판 판정이 아닙니다):
+  1. `npm run detect:test`
+  2. 정상: `통과 · 정상 조회 30건`, `통과 · 10분 안에 120건`, `통과 · 서로 다른 사용자 각 100건`, `통과 · 10분 밖으로 흩어진 조회 200건` (모두 `observe`)
+  3. 회수 제안이 나와야 할 결과: `통과 · 10분 안에 121건`, `통과 · 폭주 조회 200건` (`propose_revocation`·`burst_read`)
+  4. `npm run decider:test`도 그대로 네 줄 `통과`입니다.
+
 ## 남은 약점과 한계
 
 - **POST 409로 id 사용 여부가 드러납니다.** 이미 있는 id로 POST하면 남의 메모여도 409 `NOTE_ID_TAKEN`입니다. 내용은 드러나지 않지만 그 id가 쓰이고 있다는 사실은 알 수 있습니다. 클라이언트가 id를 정하는 `POST {id,…}` 형식을 유지해서 남긴 한계입니다.
@@ -127,7 +139,7 @@
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
 3. `main`에 push하면 Vercel이 배포합니다. `/aleph.json`의 `step`과 `commit`으로 배포된 커밋을 확인합니다.
 4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`. 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
-5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름·메모 전체 목록·공지 삭제의 응답 일곱 개를 더 기록합니다(반 엔진 판정 아님). 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
+5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름·메모 전체 목록·공지 삭제의 응답 일곱 개를, 9단계에서는 로컬 탐지기에 가상 사건을 넣은 결과 두 개(121건 제안, 120건·다른 사용자 섞임 관찰)를 더 기록합니다(반 엔진 판정 아님). 점검은 모두 20개로 제출 묶음의 상한입니다. 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
    - Git Bash: `SUPABASE_PUBLISHABLE_KEY=<publishable key> npm run bundle`
    - PowerShell: `$env:SUPABASE_PUBLISHABLE_KEY='<publishable key>'; npm run bundle; Remove-Item Env:SUPABASE_PUBLISHABLE_KEY`
 
@@ -141,7 +153,8 @@
 - **보너스 (`c4f3df2` xdr-01, `cfd64cc` xdr-02)**: `xdr/brute-force`, `xdr/web-injection` 경보 판단. 판정기에는 연결하지 않았습니다.
 - **6단계 (저장점 `546c072`)**: 판정기 규칙 `device_registered`. 등록 기기의 메모 읽기만 허용하고, 미등록 기기는 `deny`·`device_not_registered`로 거부합니다.
 - **7단계 (저장점 `e757df3`, 보충 `97d06f2`)**: 판정기 규칙 `step_up_required`와 접속 신호 입력 검사. 평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 `step_up`, 엔진의 추가 인증 뒤에는 다시 판정해 허용합니다. 저장점 뒤에 평소와 다른 시각을 `signals.hour` 0~5시로 바꿨습니다.
-- **8단계 (이 저장점)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 한 건 읽기·수정만 경로상 허용하고, 강사 공지 쓰기(POST·PUT·PATCH·DELETE)는 강사 역할 계약이 없어 항상 거부, 메모 전체 목록과 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다.
+- **8단계 (저장점 `3391c25`, 수정 `810142a`)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 한 건 읽기·수정만 경로상 허용하고, 강사 공지 쓰기(POST·PUT·PATCH·DELETE)는 강사 역할 계약이 없어 항상 거부, 메모 전체 목록과 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다. 수정 커밋에서 메모 전체 목록을 거부하고 공지 쓰기 네 메서드를 `zone_notice_update`로 명시했습니다.
+- **9단계 (이 저장점)**: 탐지기 `src/detect.mjs`. 같은 가명 사용자(`identity.sub`)의 GET이 어느 10분 구간에서든 120건을 넘으면 `propose_revocation`·`burst_read` 제안을 돌려줍니다. 집행은 하지 않습니다.
 
 ## 가상 메모 문장 검색 절차
 

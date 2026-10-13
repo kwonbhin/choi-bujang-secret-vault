@@ -174,7 +174,7 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step >= 5 && config.step <= 8) {
+  if (config.step >= 5 && config.step <= 9) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -285,6 +285,30 @@ export async function runAttackChecks(config) {
           { attackId: 'decider_zone_notice_delete', expected: '공지 삭제 DELETE /notices/:id도 deny·instructor_role_contract_missing',
             observed: `로컬 판정기 응답: ${await answer({ ...normal, service: 'notices', method: 'DELETE',
               route: 'DELETE /notices/:id', path: '/notices/week3' })}` },
+        );
+      }
+      if (config.step >= 9) {
+        // 9단계: 로컬 탐지기에 계약 모양(at, method, identity.sub)의 가상 사건을 넣은 결과만 기록합니다.
+        // 회수 집행은 반 엔진이 맡으며 이 저장소와 연결되지 않았습니다.
+        const { detect } = await import('./detect.mjs');
+        const start = Date.UTC(2026, 9, 1);
+        const reads = (count, sub) => Array.from({ length: count }, (_, index) => ({
+          at: new Date(start + index * 2000).toISOString(), method: 'GET', identity: { sub },
+        }));
+        const detected = events => {
+          try {
+            const out = detect(events);
+            return [out?.action, out?.reasonCode, out?.subject].filter(Boolean).join('·');
+          } catch (error) {
+            return `탐지기 오류: ${String(error?.message).slice(0, 80)}`;
+          }
+        };
+        checks.push(
+          { attackId: 'detector_burst_read', expected: '같은 가명 사용자의 GET 121건이 10분 안에 몰리면 propose_revocation·burst_read (제안만, 집행 안 함)',
+            observed: `로컬 탐지기 결과: ${detected(reads(121, 'learner_fixture'))}` },
+          { attackId: 'detector_threshold_and_mixed', expected: '정확히 120건과 서로 다른 사용자 각 100건은 observe',
+            observed: `로컬 탐지기 결과: 120건 ${detected(reads(120, 'learner_fixture'))}, 다른 사용자 각 100건 ${detected([
+              ...reads(100, 'learner_fixture'), ...reads(100, 'other_fixture')])}` },
         );
       }
     }
