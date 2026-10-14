@@ -1,0 +1,155 @@
+{
+  "schema": "aleph.xdr.result.v1",
+  "moduleKey": "persistence",
+  "decisions": [
+    {
+      "alertId": "ps-01",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "unsigned-or-unknown-service: 새 등록·서명 없음·사용자 쓰기 가능 경로, 수준 12"
+    },
+    {
+      "alertId": "ps-02",
+      "action": "block",
+      "confidence": 0.9,
+      "reason": "unfamiliar-scheduled-task: 평소 목록 밖·사용자 쓰기 가능 경로·수업 시간 밖, 수준 12"
+    },
+    {
+      "alertId": "ps-03",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "startup-folder-change: 시작 폴더 변경·평소 목록 밖·사용자 쓰기 가능 경로, 수준 11"
+    },
+    {
+      "alertId": "ps-04",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "unsigned-or-unknown-service: 새 등록·서명 없음, 수준 12, 반복 3번"
+    },
+    {
+      "alertId": "ps-05",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "unfamiliar-scheduled-task: 평소 목록 밖·사용자 쓰기 가능 경로, 수준 10"
+    },
+    {
+      "alertId": "ps-06",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "unsigned-or-unknown-service: 실행 파일 변경·서명 없음·사용자 쓰기 가능 경로, 수준 12"
+    },
+    {
+      "alertId": "ps-07",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "startup-folder-change+unfamiliar-scheduled-task: 시작 폴더 변경·사용자 쓰기 가능 경로·예약 작업과 같은 파일, 수준 11"
+    },
+    {
+      "alertId": "ps-08",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "unsigned-or-unknown-service: 새 등록·평소 목록 밖·사용자 쓰기 가능 경로·재부팅 뒤에도 남음, 수준 12"
+    },
+    {
+      "alertId": "ps-09",
+      "action": "alert",
+      "confidence": 0.55,
+      "reason": "single-persistence-signal: 예약 작업만 있고 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 뚜렷하지 않음, 수준 6"
+    },
+    {
+      "alertId": "ps-10",
+      "action": "alert",
+      "confidence": 0.6,
+      "reason": "startup-folder-change: 시작 폴더 변경, 수준 7"
+    },
+    {
+      "alertId": "ps-11",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-persistence-signal: 서비스 변화만 있고 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 뚜렷하지 않음, 수준 5"
+    },
+    {
+      "alertId": "ps-12",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-persistence-signal: 예약 작업만 있고 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 뚜렷하지 않음, 수준 6"
+    },
+    {
+      "alertId": "ps-13",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "temp-executable-only: 사용자 쓰기 가능 경로의 실행 파일, 서비스·예약 작업 등록 없음, 수준 8"
+    },
+    {
+      "alertId": "ps-14",
+      "action": "alert",
+      "confidence": 0.6,
+      "reason": "startup-folder-change: 시작 폴더 변경, 수준 6"
+    },
+    {
+      "alertId": "ps-15",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-persistence-signal: 예약 작업만 있고 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 뚜렷하지 않음, 수준 7"
+    },
+    {
+      "alertId": "ps-16",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-persistence-signal: 서비스 변화만 있고 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 뚜렷하지 않음, 수준 5"
+    },
+    {
+      "alertId": "ps-17",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: 서비스·예약 작업·시작 폴더 변화 없음"
+    },
+    {
+      "alertId": "ps-18",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-baseline: 평소 목록·서명된 기존 항목과 맞음, 수준 2"
+    },
+    {
+      "alertId": "ps-19",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-baseline: 평소 목록·서명된 기존 항목과 맞음, 수준 3"
+    },
+    {
+      "alertId": "ps-20",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-baseline: 평소 목록·서명된 기존 항목과 맞음, 수준 2"
+    },
+    {
+      "alertId": "ps-21",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-baseline: 평소 목록·서명된 기존 항목과 맞음, 수준 3"
+    },
+    {
+      "alertId": "ps-22",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: 서비스·예약 작업·시작 폴더 변화 없음"
+    },
+    {
+      "alertId": "ps-23",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-baseline: 평소 목록·서명된 기존 항목과 맞음, 수준 2"
+    },
+    {
+      "alertId": "ps-24",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: 서비스·예약 작업·시작 폴더 변화 없음"
+    }
+  ],
+  "counts": {
+    "block": 8,
+    "alert": 8,
+    "record": 8
+  }
+}

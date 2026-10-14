@@ -1,0 +1,63 @@
+{
+  "moduleKey": "persistence",
+  "source": "MITRE ATT&CK T1543.003 Create or Modify System Process: Windows Service (https://attack.mitre.org/techniques/T1543/003/), T1053.005 Scheduled Task/Job: Scheduled Task (https://attack.mitre.org/techniques/T1053/005/), T1547.001 Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder (https://attack.mitre.org/techniques/T1547/001/)",
+  "note": "경보 원문에 실제로 나오는 모양(rule.mitre 의 T1543·T1053, 설명의 '서명 없는·처음 보는·평소 목록에 없는·임의 문자열·시작 폴더' 표기, data.path 의 AppData·Temp·Startup 경로, data.count)을 보고 정했습니다. 경보 묶음에는 서명 여부·예약 작업·시작 폴더를 따로 담는 칸이 없어 설명 문장과 경로로 봅니다. 시작 폴더 경보도 rule.mitre 는 T1543 으로 붙어 있지만, 시작 폴더의 공식 기법 번호는 T1547.001 입니다. 숫자 기준은 decide.mjs 에서 정합니다.",
+  "patterns": [
+    {
+      "name": "unsigned-or-unknown-service",
+      "technique": "T1543.003 Create or Modify System Process: Windows Service",
+      "match": {
+        "service": "rule.mitre 에 T1543 이 있고 설명에 '서비스'가 있음",
+        "newOrChanged": "새 서비스 등록('새 서비스'·'등록', '등록은 없습니다' 제외) 또는 서비스 실행 파일 변경('실행 파일이 바뀌')",
+        "signals": "서명 없음('서명 없는·서명이 없'), 평소 목록 밖('평소 목록에 없는·처음 보는'), 사용자 쓰기 가능 경로(data.path 의 \\AppData\\·\\Temp\\·\\Users\\Public\\ 또는 설명의 '임시 폴더'), 다시 켜도 남음('다시 켜도 남'), 반복(data.count 2 이상)"
+      },
+      "evidence": "T1543.003: 공격자는 Windows 서비스를 새로 만들거나 기존 서비스의 실행 파일을 바꿔 부팅 때마다 악성 프로그램이 다시 실행되게 하며, 서명 없는 실행 파일·평소 목록에 없는 서비스·사용자가 쓸 수 있는 경로가 그 흔적입니다."
+    },
+    {
+      "name": "unfamiliar-scheduled-task",
+      "technique": "T1053.005 Scheduled Task/Job: Scheduled Task",
+      "match": {
+        "task": "rule.mitre 에 T1053 이 있거나 설명에 '예약 작업'이 있음",
+        "unfamiliar": "설명에 '처음 보는·평소 목록에 없는·임의 문자열' 표기",
+        "signals": "사용자 쓰기 가능 경로(위와 같음), 수업 시간 밖 실행('수업 시간 밖'), 서명 없음"
+      },
+      "evidence": "T1053.005: 공격자는 Windows 작업 스케줄러에 예약 작업을 만들어 로그온·부팅·정해진 시각마다 악성 프로그램을 실행하며, 평소 목록에 없는 작업 이름과 임시 폴더의 실행 파일이 그 흔적입니다."
+    },
+    {
+      "name": "startup-folder-change",
+      "technique": "T1547.001 Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder",
+      "match": {
+        "startup": "data.path 에 \\Start Menu\\Programs\\Startup\\ 이 있거나, 설명에 '시작 폴더·시작 프로그램·시작 항목'과 추가·변경·가리킴 표기('읽기만' 제외)",
+        "signals": "평소 목록 밖, 사용자 쓰기 가능 경로, 예약 작업·서비스와 같은 파일을 함께 가리킴(rule.mitre 에 T1543·T1053 이 함께 있거나 설명에 '예약 작업'도 있음)"
+      },
+      "evidence": "T1547.001: 사용자 시작 폴더(%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup)에 프로그램을 넣으면 로그온할 때마다 실행되므로, 파일 무결성 경보의 시작 폴더 추가·변경이 지속 실행 흔적입니다."
+    },
+    {
+      "name": "temp-executable-only",
+      "technique": "T1543.003 Windows Service, T1053.005 Scheduled Task (등록 전 단계)",
+      "match": {
+        "path": "사용자 쓰기 가능 경로에 실행 파일이 있음",
+        "noRegistration": "서비스·예약 작업·시작 폴더 등록이 없음('등록은 없습니다')"
+      },
+      "evidence": "T1543.003·T1053.005 모두 서비스나 예약 작업이 그 파일을 실행하도록 등록돼야 지속성이 생기므로, 임시 폴더의 실행 파일만으로는 확정하지 않고 사람이 확인합니다."
+    },
+    {
+      "name": "single-persistence-signal",
+      "technique": "T1543.003 Windows Service, T1053.005 Scheduled Task, T1547.001 Startup Folder",
+      "match": {
+        "mechanism": "서비스·예약 작업·시작 항목 변화가 있음(rule.mitre 의 T1543·T1053 또는 설명)",
+        "weak": "서명 없음·평소 목록 밖·사용자 쓰기 가능 경로가 하나도 뚜렷하지 않음(서명 '확인되지 않았·아직 모름', 수업 시간·수업 과제 이름, 설명만 변경, 같은 파일로 재시작)"
+      },
+      "evidence": "세 기법 모두 정상 관리 작업(수업 도구 등록, 예약 백업, 서비스 재시작)과 같은 기록을 남기므로, 신호가 하나뿐이면 사람이 평소 목록과 대조해야 합니다."
+    },
+    {
+      "name": "known-baseline",
+      "technique": "T1543.003·T1053.005 탐지 안내(알려진 소프트웨어·정기 업데이트와 대조)",
+      "match": {
+        "normal": "설명에 '서명된 채로·평소 시각에 그대로·평소 저장소·읽기만·기존 예약 작업이 … 마쳤' 표기",
+        "noStrongSignal": "서명 없음·평소 목록 밖·사용자 쓰기 가능 경로 신호가 없음"
+      },
+      "evidence": "MITRE 탐지 안내는 서비스·예약 작업 변화를 알려진 소프트웨어와 정기 패치 주기와 대조하라고 하므로, 서명된 기존 서비스·평소 시각의 업데이트 예약·기존 작업의 정상 완료는 기록만 합니다."
+    }
+  ]
+}

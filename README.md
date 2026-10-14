@@ -329,6 +329,22 @@
   - 다른 모듈의 규칙은 그대로 둡니다. 판정기에는 연결하지 않았습니다(이유는 위 brute-force 절과 같음).
 - `node xdr/known-cve/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 조회 구문이 있는 칸은 꺼내지 않습니다.
 
+## 보너스: 몰래 심어진 프로그램 경보 (`xdr/persistence`)
+
+- `decide.mjs`가 경보 하나를 판단합니다(`npm run xdr:run -- persistence`). import·파일·네트워크 없이 혼자 계산합니다.
+- 근거 패턴은 `patterns.json`(T1543.003 Windows 서비스, T1053.005 예약 작업, T1547.001 시작 폴더)입니다: unsigned-or-unknown-service, unfamiliar-scheduled-task, startup-folder-change, temp-executable-only, single-persistence-signal, known-baseline.
+- 경보 묶음에는 서명 여부·예약 작업·시작 폴더를 담는 칸이 따로 없습니다. 그래서 `rule.mitre`(T1543·T1053), 설명 문장, `data.path`(AppData·Temp·Startup), `data.count`를 봅니다. 시작 폴더 경보도 `rule.mitre`는 T1543이지만, 공식 기법 번호는 T1547.001입니다.
+  - 새 서비스 등록이나 서비스 실행 파일 변경에 서명 없음·평소 목록 밖·사용자 쓰기 가능 경로·반복이 더해지면 확신도가 올라갑니다(0.55부터).
+  - 평소 목록 밖 예약 작업(0.7)에 임시 폴더나 수업 시간 밖 실행이 더해지면 block입니다.
+  - 시작 폴더 추가·변경(0.6)에 평소 목록 밖·사용자 쓰기 가능 경로·예약 작업과 같은 파일이 더해지면 block입니다.
+  - 신호가 하나뿐이면 alert(0.5~0.75)입니다. 서명은 "확인되지 않음·아직 모름"이고, 수업 시간·수업 과제 이름, 설명만 바뀐 경우, 같은 파일로 다시 시작한 경우가 여기에 듭니다. 등록 없이 임시 폴더에 실행 파일만 생긴 경우도 alert입니다.
+  - 서명된 기존 서비스, 평소 시각의 예약, 정상 업데이트, 읽기만 한 경우는 record입니다.
+- 결과(로컬): block 8 · alert 8 · record 8. 정상 이벤트(ps-17~24)를 block한 경우는 없습니다.
+- `node xdr/persistence/respond.mjs`는 block 후보를 출발 주소가 아니라 그 PC의 격리 규칙 후보로 `xdr/deny-rules.json`에 쌓습니다. 규칙에는 `xdr-ps-`, `xdr_persistence_isolate`, `xdr_persistence`, `target.kind` `agent_id`/`host`, 60분 만료, 근거 경보 번호가 붙습니다. block·alert 알림은 `xdr/alerts.log`에 쌓습니다.
+  - 같은 묶음에서 정상(record)으로 나온 PC와 계정은 막지 않습니다. 이 경보 묶음은 24건 모두 같은 PC(`choi-bujang-pc`)이고 정상 경보도 그 PC에서 나왔습니다. 그래서 block 8건 모두 건너뛰고 격리 규칙은 0건이며, 알림 16줄만 남깁니다.
+  - 다른 모듈의 규칙과 파일 머리는 그대로 둡니다. 판정기에는 연결하지 않았습니다(현재 요청 계약에 PC 식별값이 없음).
+- `node xdr/persistence/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 실행 파일 경로와 호스트 칸은 꺼내지 않습니다.
+
 ## 다시 실행하는 방법
 
 1. Supabase 대시보드 > SQL Editor에서 아래 순서대로 실행합니다. 뒤 파일이 앞 파일의 권한을 바꾸므로, 다시 실행할 때도 이 순서 전체를 지킵니다(예: `notes-rls.sql`만 다시 실행하면 authenticated 직접 권한이 되살아납니다).
