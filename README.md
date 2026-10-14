@@ -213,7 +213,19 @@
   - 로컬 확인(2026-10-14): PGlite(PostgreSQL 16)에 Supabase 역할·`auth.uid()`·안전 상태 `vault_notes`를 흉내 낸 가짜 DB를 만들어 두 파일을 두 번씩 실행했습니다.
     - 결과 표는 모두 기대값이었고, 시험은 pass였습니다.
     - 사본·감사 수정·삭제 막힘, 없는 버전 멈춤, 침해 상태 사본 남기기 거부, 메모 주인이 한 명이면 fail·전부 취소도 확인했습니다.
-    - 실제 Supabase 실행 결과는 아직 없습니다(미실행).
+  - **실제 Supabase 결과** — 실행(2026-10-14, 학생이 SQL Editor에서 직접):
+    - `step10_policy_backup.sql`:
+      - 사본 남기기 `captured`, 안전 기준과 다른 점 `[]`, 사본 해시 재계산 true, 사본 sha256 앞 12자 `bfe01770a71c`
+      - 바뀔 항목 0, 사본 1 / 감사 1, 두 표 RLS true·true, 두 표 외부 권한 없음, 트리거 4
+      - 함수 실행 권한 anon·authenticated·service_role 모두 false, `vault_notes` RLS true / 정책 4
+    - `step10_policy_restore_test.sql`:
+      - **pass**. 침공 흉내 뒤 사본과 달라짐 true
+      - 미리보기 바뀔 항목 3개(`policy:vault_notes_breach_read_all`, `policy:vault_notes_update_own`, `grant:authenticated`)
+      - 복원 true, 복원 뒤 사본과 같음 true, authenticated 직접 읽기 거부 true
+      - B가 A 메모 0건, A가 자기 메모 4건, RLS 확인 오류 없음
+      - 시험 뒤 정책 4개(본인 행), 외부 권한 없음, 마지막 감사 `restore_test pass`
+    - 여기의 A·B는 "메모를 먼저 만든 주인 = A, 두 번째 = B"입니다.
+    - 로컬 PGlite와 실제 Supabase의 사본 sha256 앞 12자(`bfe01770a71c`)가 같았습니다.
 - **실제 DB에서 발견한 정책 변경과 되돌린 방법** (2026-10-14, `supabase/restore-check.sql` 결과):
   - 발견: `vault_notes`에 `authenticated`의 테이블 권한(DELETE, INSERT 등)과 칸 단위 권한이 생겨 있었습니다. 9단계 판정 커밋 `23fce0d`의 `supabase/notes-revoke-direct.sql` 기준은 "PUBLIC·anon·authenticated 권한 없음"이라 정책과 다릅니다. RLS 켜짐, 정책 4개, 칸 이름, 트리거 없음, 메모 5개는 정상이었습니다.
   - 영향: 직접 권한이 살아 있는 동안은 로그인 토큰으로 Data API에 직접 닿을 수 있었습니다. RLS 정책 4개가 그대로라 본인 행으로 제한되지만, 서버 함수의 검사(길이 제한 등)를 거치지 않는 쓰기가 가능했습니다. 언제·어떻게 생겼는지는 DB 기록으로 확인하지 않았습니다.
@@ -229,6 +241,8 @@
   | 3 | `supabase/restore-check.sql` 재확인 | `vault_notes`의 anon·authenticated·PUBLIC 권한 없음, 칸 단위 권한 없음, 정책 4개 |
   | 4 | `supabase/restore.sql` | 21행 모두 기대값(트리거 1개, 새 테이블 외부 권한 없음, 함수 실행 false) |
   | 5 | `supabase/restore-snapshot-existing.sql` | 메모 5, 사본 5, 사본 없는 메모 0, 바뀐 메모 0, 주인 다른 사본 0 |
+  | 6 | `supabase/step10_policy_backup.sql` | 실행(2026-10-14, 학생이 SQL Editor에서 직접): 사본 `s9-safe-1` captured, 다른 점 [], 재계산 true, sha256 `bfe01770a71c…`, 바뀔 항목 0, 두 표 RLS·외부 권한 없음·트리거 4, 함수 실행 권한 모두 false, `vault_notes` RLS true / 정책 4 |
+  | 7 | `supabase/step10_policy_restore_test.sql` | 실행(2026-10-14, 학생이 SQL Editor에서 직접): pass. 미리보기 3항목 → 복원 true → 사본과 같음, 직접 읽기 거부, B→A 0건, A 자기 메모 4건, 정책 4개·외부 권한 없음, 감사 `restore_test pass` |
 
 - **실제 배포 복구 확인** `npm run restore:live-check` (학생이 Claude Code 밖의 자기 터미널에서 실행):
   - B 이메일과 비밀번호를 실행할 때 묻습니다. 비밀번호는 화면에 보이지 않고, 둘 다 파일·로그에 남지 않습니다. 로그인은 앱의 `POST /api/auth/login`으로 하므로 publishable key는 필요 없습니다.
@@ -261,6 +275,7 @@
 | 10 | 9단계 | `npm run detect:test` | 여섯 줄 `통과` | 그대로 나옴(로컬 가상 사건) |
 | 11 | 10단계 | `npm run test:restore`, `npm run policy:diff` | 9개 통과, 다른 항목 없음 | 9개 통과, 다른 항목 없음(로컬) |
 | 12 | 10단계 | `npm run restore:live-check` | `모두 통과 (10개)` | `b613f24`에서 `모두 통과 (10개)`: 변조·삭제 뒤 복구 모두 200·matched true·처음 해시와 같음, 로그인 없이 복구 401, 없는 id 복구 404 |
+| 13 | 4·10단계 | SQL Editor에서 `supabase/step10_policy_restore_test.sql`(DB 안전 정책 침공 흉내 → 미리보기 → 복원) | pass, B→A 0건, A 자기 메모 1건 이상 | 실행(2026-10-14, 학생이 SQL Editor에서 직접): pass, B→A 0건, A 자기 메모 4건, authenticated 직접 읽기 거부, 정책 4개·외부 권한 없음 |
 
 ## 남은 약점과 한계
 
