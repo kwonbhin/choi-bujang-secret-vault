@@ -7,19 +7,35 @@ const SECRET_SHAPE = /sb_secret_[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-
 // 파일이 있고 그 대상 커밋(배포된 /aleph.json의 commit)이 지금 HEAD와 같을 때만 "실행"으로 적고, 아니면 미실행입니다.
 // 파일에 적힌 통과 수·상태 코드를 그대로 옮기고 고치지 않습니다.
 const LIVE_NOT_RUN = '미실행: B 계정 비밀번호가 필요해 제출 묶음에서는 보내지 않음. 학생이 터미널에서 npm run restore:live-check로 직접 확인';
+// 지금 커밋: git 명령을 실행하지 않고 node:fs로 .git/HEAD(와 그 ref 파일·packed-refs)만 읽습니다. 모르면 null.
+function headFromGitFiles(readFileSync) {
+  try {
+    const gitDir = new URL('../.git/', import.meta.url);
+    const head = readFileSync(new URL('HEAD', gitDir), 'utf8').trim();
+    if (/^[0-9a-f]{40}$/u.test(head)) return head;
+    const ref = /^ref: (refs\/heads\/[A-Za-z0-9._/-]{1,200})$/u.exec(head)?.[1];
+    if (!ref || ref.includes('..')) return null;
+    try {
+      const loose = readFileSync(new URL(ref, gitDir), 'utf8').trim();
+      if (/^[0-9a-f]{40}$/u.test(loose)) return loose;
+    } catch { /* packed-refs에서 찾습니다. */ }
+    const packed = readFileSync(new URL('packed-refs', gitDir), 'utf8').split(/\r?\n/u)
+      .map(line => line.split(' ')).find(([sha, name]) => name === ref && /^[0-9a-f]{40}$/u.test(sha));
+    return packed ? packed[0] : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function liveRestoreObserved() {
   const { readFileSync } = await import('node:fs');
-  const { execFileSync } = await import('node:child_process');
   let saved;
   try {
     saved = JSON.parse(readFileSync(new URL('../artifacts/restore-live-result.json', import.meta.url), 'utf8'));
   } catch {
     return `${LIVE_NOT_RUN} (결과 파일 없음)`;
   }
-  let head = null;
-  try {
-    head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', windowsHide: true }).trim();
-  } catch { /* 커밋을 모르면 미실행으로 둡니다. */ }
+  const head = headFromGitFiles(readFileSync);
   const steps = Array.isArray(saved?.steps) ? saved.steps : [];
   if (saved?.schema !== 'aleph.student.restore-live-result.v1' || !head || saved.targetCommit !== head
       || Number.isNaN(Date.parse(saved.ranAt ?? '')) || !steps.length) {
@@ -104,7 +120,8 @@ async function keyLeak(responses) {
 
 // 12단계 점검: 배포 주소에 GET·HEAD 요청만 보내고, 점검마다 요청은 정확히 한 번, 아래 표의 순서대로 보냅니다.
 // fetch 옵션에 alephEvidence { caseId: attackId, requestKey: 새 UUID }를 붙입니다(헤더·주소·본문에는 넣지 않음).
-// observed는 "HTTP <상태> …"로 시작합니다. POST가 꼭 필요한 점검과 반 엔진이 맡는 점검은 요청 없이 "미실행"으로 적습니다.
+// observed는 "HTTP <상태> …"로 시작합니다. POST가 필요한 점검과 반 엔진이 맡는 점검은 요청 없이 "not_run: …"(미실행)으로 적습니다.
+// 이 경로는 node:crypto(randomUUID)·fetch(GET·HEAD)·process.env만 씁니다. git 등 다른 명령을 실행하지 않습니다(하위 프로세스 모듈을 불러오지 않음).
 // 판정기·탐지기·정책 사본의 로컬 결과는 요청이 아니어서 이 표에 넣지 않습니다(npm run ops:verify의 로컬 표와 작전실 응답).
 const READ_METHODS = new Set(['GET', 'HEAD']);
 async function probe(target, attackId, { method = 'GET', headers } = {}) {
@@ -125,7 +142,7 @@ async function apiNote(response) {
   return `HTTP ${response.status}, ${error}, 메모 ${await noteCount(response)}건, ${requestIdNote(response)}`;
 }
 
-export function stage12Plan(config, { head = null } = {}) {
+export function stage12Plan(config) {
   const forged = { Authorization: `Bearer ${forgedToken(config)}` };
   const id = '00000000-0000-4000-8000-000000000012';
   const SEED_SENTENCE = /\uC2E4\uC2B5\uC6A9 \uAC00\uC0C1/gu;
@@ -135,10 +152,10 @@ export function stage12Plan(config, { head = null } = {}) {
         return `HTTP ${r.status}, sb_publishable_ ${t.match(/sb_publishable_/gu)?.length ?? 0}건, sb_secret_ ${t.match(/sb_secret_/gu)?.length ?? 0}건, 시드 메모 문장 ${t.match(SEED_SENTENCE)?.length ?? 0}건`; } },
     { attackId: 'public_data_file', expected: '공개 GET /data.json은 404이고 메모가 없음', path: '/data.json',
       observe: async r => `HTTP ${r.status}, 메모 ${await noteCount(r)}건` },
-    { attackId: 'deployment_identity', expected: 'GET /aleph.json은 200, step 12, commit이 검사한 커밋(HEAD)과 같음', path: '/aleph.json',
+    { attackId: 'deployment_identity', expected: 'GET /aleph.json은 200, step 12와 배포 commit을 보여 줌', path: '/aleph.json',
       observe: async r => { const d = await jsonOf(r);
-        const commit = typeof d?.commit === 'string' ? d.commit : '';
-        return `HTTP ${r.status}, step ${d?.step ?? '없음'}, commit ${commit.slice(0, 7) || '없음'}${head ? (commit === head ? ' (HEAD와 같음)' : ` (HEAD ${head.slice(0, 7)}와 다름)`) : ''}`; } },
+        const commit = typeof d?.commit === 'string' && /^[0-9a-f]{40}$/u.test(d.commit) ? d.commit : '없음';
+        return `HTTP ${r.status}, step ${d?.step ?? '없음'}, commit ${commit}`; } },
     { attackId: 'app_manifest', expected: 'GET /manifest.webmanifest는 200, display standalone, 아이콘 192·512', path: '/manifest.webmanifest',
       observe: async r => { const d = await jsonOf(r);
         return `HTTP ${r.status}, display ${d?.display ?? '없음'}, 아이콘 ${Array.isArray(d?.icons) ? d.icons.map(i => i?.sizes).join('·') : '없음'}`; } },
@@ -151,7 +168,7 @@ export function stage12Plan(config, { head = null } = {}) {
     { attackId: 'restore_get_method', expected: '복구 경로는 GET으로 실행되지 않음(405 Allow POST, 자료 없음)', path: `/api/notes/${id}/restore`,
       observe: async r => `${await apiNote(r)}, Allow ${r.headers.get('allow') ?? '없음'}` },
     { attackId: 'restore_post_without_login', expected: '로그인 없이 POST /api/notes/:id/restore는 401',
-      notRun: '미실행: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음. 로컬 npm run test:restore와 npm run ops:verify로 확인' },
+      notRun: 'not_run: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음(미실행). 로컬 npm run test:restore와 npm run ops:verify로 확인' },
     { attackId: 'device_route_get', expected: '기기 승인 경로는 GET으로 열리지 않음(405 Allow POST)', path: '/api/devices/verify',
       observe: async r => `${await apiNote(r)}, Allow ${r.headers.get('allow') ?? '없음'}` },
     { attackId: 'anonymous_ops_summary', expected: '로그인 없이 GET /api/ops/summary는 401 JSON이고 요약 없음', path: '/api/ops/summary', observe: apiNote },
@@ -162,27 +179,22 @@ export function stage12Plan(config, { head = null } = {}) {
       observe: async r => `HTTP ${r.status}, 메모 ${await noteCount(r)}건` },
     { attackId: 'anon_original_api_read', expected: 'anon 키로 originalApiUrl GET이 권한 없음(42501)으로 거부됨', original: true },
     { attackId: 'anon_original_api_write', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
-      notRun: '미실행: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음' },
+      notRun: 'not_run: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음(미실행)' },
     { attackId: 'relay_step_up_data_block', expected: '실제 릴레이가 추가 확인 전 자료를 막고 재로그인 뒤 다시 판정함',
-      notRun: '미실행: 실제 재로그인·자료 차단은 ALEPH SDP 엔진(제공)이 맡고, 이 저장소의 api/는 판정기를 부르지 않아 학생이 직접 보낼 수 없음' },
+      notRun: 'not_run: 실제 재로그인·자료 차단은 ALEPH SDP 엔진(제공)이 맡고, 이 저장소의 api/는 판정기를 부르지 않아 학생이 직접 보낼 수 없음(미실행)' },
   ];
 }
 
 async function stage12Checks(config, app) {
-  let head = null;
-  try {
-    const { execFileSync } = await import('node:child_process');
-    head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', windowsHide: true }).trim();
-  } catch { /* 커밋을 모르면 비교하지 않습니다. */ }
   const checks = [];
-  for (const item of stage12Plan(config, { head })) {
+  for (const item of stage12Plan(config)) {
     const { attackId, expected } = item;
     if (item.notRun) { checks.push({ attackId, expected, observed: item.notRun }); continue; }
     if (item.original) {
       // anon 키는 bundle을 실행하는 명령의 환경변수로만 받습니다. 없으면 요청하지 않고 미실행입니다.
       const publishable = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
       if (!publishable || !config.originalApiUrl) {
-        checks.push({ attackId, expected, observed: '미실행: 실행 명령에 SUPABASE_PUBLISHABLE_KEY 환경변수가 없어 보내지 않음' });
+        checks.push({ attackId, expected, observed: 'not_run: 실행 명령에 SUPABASE_PUBLISHABLE_KEY 환경변수가 없어 보내지 않음(미실행)' });
         continue;
       }
       const r = await probe(new URL(config.originalApiUrl), attackId, { headers: { apikey: publishable } });

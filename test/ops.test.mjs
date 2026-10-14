@@ -2,6 +2,8 @@
 // 실제 Supabase·배포·심판과 무관합니다. 가짜 저장소와 가짜 fetch만 씁니다.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createOpsHandler, SOURCES } from '../src/ops-api.mjs';
 import { createNotesHandler } from '../src/notes-api.mjs';
@@ -237,7 +239,7 @@ test('제출 점검(12단계): GET·HEAD만, 점검마다 한 번, 정해진 순
       const plan = stage12Plan({ ...config, step: 12 });
       assert.ok(checks.length <= 20);
       assert.deepEqual(checks.map(c => c.attackId), plan.map(p => p.attackId));
-      const requested = checks.filter(c => !c.observed.startsWith('미실행'));
+      const requested = checks.filter(c => !c.observed.startsWith('not_run:'));
       assert.equal(sent.length, requested.length);
       assert.deepEqual(sent.map(s => s.init.alephEvidence.caseId), requested.map(c => c.attackId));
       const keys = new Set();
@@ -253,12 +255,55 @@ test('제출 점검(12단계): GET·HEAD만, 점검마다 한 번, 정해진 순
       assert.equal(keys.size, sent.length);
       for (const c of requested) assert.match(c.observed, /^HTTP \d{3}\b/u, c.attackId);
       const original = checks.find(c => c.attackId === 'anon_original_api_read');
-      assert.equal(original.observed.startsWith('미실행'), !key);
+      assert.equal(original.observed.startsWith('not_run:'), !key);
     }
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY; else process.env.SUPABASE_PUBLISHABLE_KEY = originalKey;
   }
+});
+
+test('제출 점검(12단계): 미실행 점검의 observed는 not_run으로 시작', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  globalThis.fetch = async () => new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } });
+  delete process.env.SUPABASE_PUBLISHABLE_KEY;
+  try {
+    const checks = await runAttackChecks({ ...config, step: 12 });
+    const notRun = ['restore_post_without_login', 'anon_original_api_write', 'relay_step_up_data_block', 'anon_original_api_read'];
+    for (const id of notRun) assert.match(checks.find(c => c.attackId === id).observed, /^not_run: /u, id);
+    for (const c of checks) assert.match(c.observed, /^(?:HTTP \d{3}\b|not_run: )/u, c.attackId);
+    // 미실행이 아닌 점검은 모두 요청을 보낸 점검입니다.
+    assert.equal(checks.filter(c => c.observed.startsWith('not_run: ')).length, notRun.length);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY; else process.env.SUPABASE_PUBLISHABLE_KEY = originalKey;
+  }
+});
+
+test('제출 점검(12단계): child_process를 부르지 않음(코드에 없고, 실행 권한을 막은 Node에서도 끝까지 돎)', () => {
+  const source = readFileSync(new URL('../src/attack-check.mjs', import.meta.url), 'utf8');
+  for (const word of ['child_process', 'execFile', 'execSync', 'spawn(', 'node:net', 'node:http', 'writeFile']) {
+    assert.equal(source.includes(word), false, word);
+  }
+  // Node 권한 모델(--permission)은 하위 프로세스 실행과 파일 쓰기를 막습니다. 그 안에서 12단계 점검을 끝까지 돌립니다.
+  const script = `
+    globalThis.fetch = async (url, init) => new Response(init.method === 'HEAD' ? null : '{"error":"LOGIN_REQUIRED"}', { status: 401 });
+    const { runAttackChecks } = await import(${JSON.stringify(new URL('../src/attack-check.mjs', import.meta.url).href)});
+    const config = JSON.parse(process.env.CHECK_CONFIG);
+    const checks = await runAttackChecks(config);
+    process.stdout.write(JSON.stringify(checks.map(c => c.observed.slice(0, 8))));
+  `;
+  const out = execFileSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e', script], {
+    encoding: 'utf8', windowsHide: true,
+    env: { ...process.env, SUPABASE_PUBLISHABLE_KEY: '', CHECK_CONFIG: JSON.stringify({ ...config, step: 12 }) },
+  });
+  const observed = JSON.parse(out);
+  assert.equal(observed.length, stage12Plan({ ...config, step: 12 }).length);
+  assert.ok(observed.every(text => text.startsWith('HTTP ') || text.startsWith('not_run:')), out);
+  // 같은 권한 모델에서 하위 프로세스를 부르면 실제로 막히는지도 확인합니다(시험이 헛돌지 않게).
+  assert.throws(() => execFileSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e',
+    "import('node:child_process').then(m => m.execFileSync('git', ['--version']))"], { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }));
 });
 
 test('실측 표: 보낸 요청만 결과를 적고, 보내지 않은 줄은 미실행·일치 없음', async () => {
