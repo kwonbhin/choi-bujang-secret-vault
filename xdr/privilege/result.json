@@ -1,0 +1,167 @@
+{
+  "schema": "aleph.xdr.result.v1",
+  "moduleKey": "privilege",
+  "decisions": [
+    {
+      "alertId": "pv-01",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "admin-group-add: 관리자 그룹 추가·평범한 계정·원격·처음 보는 주소, 수준 12"
+    },
+    {
+      "alertId": "pv-02",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "new-admin-command: 관리자 명령·방금 관리자가 된 계정, 수준 12"
+    },
+    {
+      "alertId": "pv-03",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "new-admin-command+off-hours-privilege: 관리자 명령·처음 보는 주소·시간 밖, 수준 11"
+    },
+    {
+      "alertId": "pv-04",
+      "action": "block",
+      "confidence": 0.95,
+      "reason": "admin-group-add+new-admin-command: 관리자 그룹 추가·평범한 계정·관리자 명령, 수준 12"
+    },
+    {
+      "alertId": "pv-05",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "admin-group-add: 관리자 그룹 추가·평범한 계정·여러 번(4), 수준 10, 반복 4번"
+    },
+    {
+      "alertId": "pv-06",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "session-elevation: 세션 권한 상승·평범한 계정·처음 보는 주소, 수준 12"
+    },
+    {
+      "alertId": "pv-07",
+      "action": "block",
+      "confidence": 1,
+      "reason": "admin-group-add+new-admin-command+off-hours-privilege: 관리자 그룹 추가·평범한 계정·관리자 명령·시간 밖, 수준 11"
+    },
+    {
+      "alertId": "pv-08",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "new-admin-command: 관리자 명령·다른 계정의 권한, 수준 12"
+    },
+    {
+      "alertId": "pv-09",
+      "action": "block",
+      "confidence": 0.9,
+      "reason": "admin-group-add: 관리자 그룹 추가·평범한 계정·여러 번(2)·빠졌다가 다시 들어옴, 수준 10, 반복 2번"
+    },
+    {
+      "alertId": "pv-10",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-privilege-signal: 권한 상승 시도만 있고 다른 신호 없음, 수준 6"
+    },
+    {
+      "alertId": "pv-11",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "group-change-non-admin: 관리자 그룹이 아닌 그룹 변경(project-week3), 수준 7"
+    },
+    {
+      "alertId": "pv-12",
+      "action": "alert",
+      "confidence": 0.55,
+      "reason": "new-admin-command: 관리자 명령, 수준 5"
+    },
+    {
+      "alertId": "pv-13",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-privilege-signal: 권한 표시만 있고 다른 신호 없음, 수준 6"
+    },
+    {
+      "alertId": "pv-14",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-privilege-signal: 권한 상승 시도만 있고 다른 신호 없음, 수준 8"
+    },
+    {
+      "alertId": "pv-15",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "group-change-non-admin: 관리자 그룹이 아닌 그룹 변경(lab-notes), 수준 6"
+    },
+    {
+      "alertId": "pv-16",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-privilege-signal: 관리자 명령 시도만 있고 다른 신호 없음, 수준 7"
+    },
+    {
+      "alertId": "pv-17",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "group-change-non-admin: 관리자 그룹이 아닌 그룹 변경(class-readers), 수준 5"
+    },
+    {
+      "alertId": "pv-18",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 3"
+    },
+    {
+      "alertId": "pv-19",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 3"
+    },
+    {
+      "alertId": "pv-20",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 2"
+    },
+    {
+      "alertId": "pv-21",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 원래 관리 계정의 평소 작업, 수준 3"
+    },
+    {
+      "alertId": "pv-22",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 3"
+    },
+    {
+      "alertId": "pv-23",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 2"
+    },
+    {
+      "alertId": "pv-24",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 3"
+    },
+    {
+      "alertId": "pv-25",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 원래 관리 계정의 평소 작업, 수준 3"
+    },
+    {
+      "alertId": "pv-26",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-admin-baseline: 권한 신호 없는 평소 사용, 수준 2"
+    }
+  ],
+  "counts": {
+    "block": 9,
+    "alert": 8,
+    "record": 9
+  }
+}

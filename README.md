@@ -345,6 +345,26 @@
   - 다른 모듈의 규칙과 파일 머리는 그대로 둡니다. 판정기에는 연결하지 않았습니다(현재 요청 계약에 PC 식별값이 없음).
 - `node xdr/persistence/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 실행 파일 경로와 호스트 칸은 꺼내지 않습니다.
 
+## 보너스: 권한 가로채기 경보 (`xdr/privilege`)
+
+- `decide.mjs`가 경보 하나를 판단합니다(`npm run xdr:run -- privilege`). import·파일·네트워크 없이 혼자 계산합니다.
+- 근거 패턴은 `patterns.json`(T1068 권한 상승 악용, T1078·T1078.003 정상 계정, T1098.007 관리자 그룹 추가)입니다: admin-group-add, new-admin-command, session-elevation, off-hours-privilege, group-change-non-admin, single-privilege-signal, known-admin-baseline.
+- `rule.mitre`, `data.group`(administrators 등), `data.count`, `data.srcuser` 모양(admin·svc-로 시작하지 않으면 평범한 계정), `timestamp`, 설명 문장을 봅니다. 관리자 그룹 추가는 경보에 T1078로 붙어 있지만, 더 맞는 공식 하위 기법은 T1098.007입니다.
+- 업무 시간은 09:00 이상 16:00 미만입니다(timestamp에 적힌 +09:00 그대로).
+  - 근거: 원문에서 "수업 시간에·수업 중"인 경보와 정상 이벤트가 모두 09:08~15:41에 있습니다.
+  - 그런데 "수업 시간 밖·업무처럼 보이지 않는 시각"이라고 적힌 pv-03(10:03)·pv-07(14:16)은 timestamp가 이 안에 있습니다. 그래서 시간 밖 신호는 설명 표기나 시각 중 하나만 맞아도 셉니다.
+- 점수
+  - 관리자 그룹 추가(0.6)에 평범한 계정·관리자 명령·원격이나 처음 보는 주소·여러 계정·빠졌다가 다시 들어옴·시간 밖이 겹치면 block입니다.
+  - 세션 권한 상승(0.6)에 평범한 계정과 처음 보는 주소가 겹치면 block입니다.
+  - 관리자 명령(0.55)에 방금 관리자가 된 계정, 다른 계정의 권한, 처음 보는 주소와 시간 밖 중 하나가 겹치면 block입니다.
+  - 신호 하나만 있으면 alert(0.5~0.7)입니다. 관리자 그룹이 아닌 그룹 변경, 권한 상승 창 취소, 명령 실패, 평소 주소의 관리자 명령 한 번, 계정 종류 조회가 여기에 듭니다.
+  - 원래 관리 계정(admin·svc-)의 평소 작업, "승인된" 변경, 로그인·로그아웃·조회는 record입니다.
+- 결과(로컬): block 9 · alert 8 · record 9. 정상 이벤트(pv-18~26)를 block한 경우는 없습니다.
+- `node xdr/privilege/respond.mjs`는 block 후보를 출발 주소나 PC가 아니라 그 계정의 세션 회수 규칙 후보로 `xdr/deny-rules.json`에 쌓습니다. 규칙에는 `xdr-pv-`, `xdr_privilege_revoke_session`, `xdr_privilege`, `action` `revoke_session`, `target.kind` `account`, 60분 만료, 근거 경보 번호가 붙습니다. block·alert 알림은 `xdr/alerts.log`에 쌓습니다.
+  - 같은 묶음에서 정상(record)으로 나온 계정은 막지 않습니다. 그래서 user01~05의 block(pv-01~06)은 건너뛰고, user06·user07·user08 세 계정의 규칙만 만들며, 알림은 17줄입니다.
+  - 다른 모듈의 규칙과 파일 머리는 그대로 둡니다. 판정기에는 연결하지 않았습니다(현재 요청 계약은 가명 계정만 주고, 엔진의 세션 회수와 연결돼 있지 않음).
+- `node xdr/privilege/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 그룹·횟수·호스트 칸은 꺼내지 않습니다.
+
 ## 다시 실행하는 방법
 
 1. Supabase 대시보드 > SQL Editor에서 아래 순서대로 실행합니다. 뒤 파일이 앞 파일의 권한을 바꾸므로, 다시 실행할 때도 이 순서 전체를 지킵니다(예: `notes-rls.sql`만 다시 실행하면 authenticated 직접 권한이 되살아납니다).
