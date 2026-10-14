@@ -46,8 +46,19 @@ function fakeSupabase(tables) {
           if (found[0] && patch) Object.assign(found[0], patch);
           return { data: found[0] ? { ...found[0] } : null, error: null };
         },
+        // 감사 기록은 insert().select('audit_id').single()로 새 줄 id를 돌려받습니다.
+        // tables.failAudit(row)가 true면 그 감사 줄 쓰기가 실패합니다.
         insert(row) {
-          if (name !== 'vault_restore_audit' && rows.some(existing => existing.id === row.id)) {
+          if (name === 'vault_restore_audit') {
+            const write = () => {
+              if (tables.failAudit?.(row)) return { data: null, error: { code: '42501' } };
+              const audit_id = rows.length + 1;
+              rows.push({ audit_id, ...row });
+              return { data: { audit_id }, error: null };
+            };
+            return { select: () => ({ single: async () => write() }) };
+          }
+          if (rows.some(existing => existing.id === row.id)) {
             return Promise.resolve({ error: { code: '23505' } });
           }
           rows.push({ ...row });
@@ -73,6 +84,7 @@ async function call(tables, { user = B, method = 'POST', id, body, query = {}, a
 
 const snapshotOf = (tables, id) => tables.vault_notes_snapshot.find(row => row.id === id);
 const noteOf = (tables, id) => tables.vault_notes.find(row => row.id === id);
+const withoutAudit = ({ audit, ...rest }) => rest;
 
 test('B 메모 변조 → 복구 성공, 해시 일치, 응답에 내용 없음', async () => {
   const tables = seed();
@@ -81,7 +93,7 @@ test('B 메모 변조 → 복구 성공, 해시 일치, 응답에 내용 없음'
   const snapshot = snapshotOf(tables, NOTE_B);
   const tamperedSha = noteSha256('B 메모', '변조된 본문');
   assert.equal(status, 200);
-  assert.deepEqual(Object.keys(json).sort(), ['after', 'backup', 'before', 'changes', 'id', 'matched', 'restored', 'sha256']);
+  assert.deepEqual(Object.keys(json).sort(), ['after', 'audit', 'backup', 'before', 'changes', 'id', 'matched', 'restored', 'sha256']);
   assert.equal(json.restored, true);
   assert.equal(json.matched, true);
   assert.equal(json.sha256, snapshot.content_sha256);
@@ -121,7 +133,7 @@ test('B가 A 메모 복구 시도 → 404, A 메모는 그대로', async () => {
   noteOf(tables, NOTE_A).content = 'A가 고친 본문';
   const { status, json } = await call(tables, { id: NOTE_A, body: { owner_id: A }, query: { owner_id: A } });
   assert.equal(status, 404);
-  assert.deepEqual(json, { error: 'NOTE_NOT_FOUND' });
+  assert.deepEqual(withoutAudit(json), { error: 'NOTE_NOT_FOUND' });
   assert.equal(noteOf(tables, NOTE_A).content, 'A가 고친 본문');
 });
 
@@ -130,7 +142,9 @@ test('없는 id → 404 (남의 메모와 같은 응답)', async () => {
   const missing = await call(tables, { id: MISSING });
   const others = await call(seed(), { id: NOTE_A });
   assert.equal(missing.status, 404);
-  assert.deepEqual(missing.json, others.json);
+  // audit id 숫자만 다르고 나머지는 같아야 합니다.
+  assert.deepEqual(withoutAudit(missing.json), withoutAudit(others.json));
+  assert.deepEqual(Object.keys(missing.json.audit), Object.keys(others.json.audit));
 });
 
 test('로그인 없음 → 401, 감사 기록 없음', async () => {
@@ -147,7 +161,7 @@ test('사본 해시 대조 실패 → 409 BACKUP_VERIFICATION_FAILED, 복원 안
   noteOf(tables, NOTE_B).content = '변조된 본문';
   const { status, json } = await call(tables, { id: NOTE_B });
   assert.equal(status, 409);
-  assert.deepEqual(json, { error: 'BACKUP_VERIFICATION_FAILED', restored: false,
+  assert.deepEqual(withoutAudit(json), { error: 'BACKUP_VERIFICATION_FAILED', restored: false,
     backup: { verified: false, version: snapshotOf(tables, NOTE_B).snapshot_at } });
   assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
   assert.equal(tables.vault_restore_audit.at(-1).outcome, 'backup_verification_failed');
@@ -160,14 +174,14 @@ test('자기 메모가 있는데 사본이 없음 → 409 BACKUP_MISSING, 복원
   noteOf(tables, NOTE_B).content = '변조된 본문';
   const { status, json } = await call(tables, { id: NOTE_B });
   assert.equal(status, 409);
-  assert.deepEqual(json, { error: 'BACKUP_MISSING', restored: false });
+  assert.deepEqual(withoutAudit(json), { error: 'BACKUP_MISSING', restored: false });
   assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
   assert.equal(tables.vault_restore_audit.at(-1).outcome, 'backup_missing');
   // 남의 메모(사본 없음)는 BACKUP_MISSING이 아니라 같은 404입니다.
   tables.vault_notes_snapshot = tables.vault_notes_snapshot.filter(row => row.id !== NOTE_A);
   const other = await call(tables, { id: NOTE_A });
   assert.equal(other.status, 404);
-  assert.deepEqual(other.json, { error: 'NOTE_NOT_FOUND' });
+  assert.deepEqual(withoutAudit(other.json), { error: 'NOTE_NOT_FOUND' });
 });
 
 test('복원 직전에 다시 읽은 사본이 검증한 것과 다름 → 409, 복원 안 됨', async () => {
@@ -182,7 +196,7 @@ test('복원 직전에 다시 읽은 사본이 검증한 것과 다름 → 409, 
     tables.onRead = (name, n, t) => { if (name === 'vault_notes_snapshot' && n === 2) change(snapshotOf(t, NOTE_B)); };
     const { status, json } = await call(tables, { id: NOTE_B });
     assert.equal(status, 409);
-    assert.deepEqual(json, { error: 'BACKUP_VERIFICATION_FAILED', restored: false, backup: { verified: false, version } });
+    assert.deepEqual(withoutAudit(json), { error: 'BACKUP_VERIFICATION_FAILED', restored: false, backup: { verified: false, version } });
     assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
     assert.equal(tables.vault_restore_audit.at(-1).outcome, 'backup_changed');
   }
@@ -206,7 +220,7 @@ test('사본 주인은 B지만 지금 행 주인이 다르면 → 404, 덮어쓰
   assert.equal(tables.vault_restore_audit.at(-1).outcome, 'owner_mismatch');
 });
 
-test('다른 메모·사본은 그대로, 감사 기록은 로그인 요청마다 한 줄씩만 늘고 내용·토큰이 없음', async () => {
+test('다른 메모·사본은 그대로, 감사 기록은 시작·결과 줄만 늘고 내용·토큰이 없음', async () => {
   const tables = seed();
   noteOf(tables, NOTE_B).content = '변조된 본문';
   const before = JSON.stringify({ a: noteOf(tables, NOTE_A), b2: noteOf(tables, NOTE_B2), snaps: tables.vault_notes_snapshot });
@@ -216,9 +230,9 @@ test('다른 메모·사본은 그대로, 감사 기록은 로그인 요청마�
   assert.equal(after, before);
   assert.equal(tables.vault_notes.length, 3);
   assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome),
-    ['restored_modified', 'not_found', 'not_found', 'invalid_id']);
+    ['restore_started', 'restored_modified', 'restore_started', 'not_found', 'restore_started', 'not_found', 'invalid_id']);
   for (const row of tables.vault_restore_audit) {
-    assert.deepEqual(Object.keys(row).sort(), ['actor_id', 'content_sha256', 'matched', 'note_id', 'outcome']);
+    assert.deepEqual(Object.keys(row).sort(), ['actor_id', 'audit_id', 'content_sha256', 'matched', 'note_id', 'outcome']);
     assert.doesNotMatch(JSON.stringify(row), /가상 본문|변조|Bearer|good/u);
   }
 });
@@ -234,4 +248,122 @@ test('이미 사본과 같으면 쓰지 않고 일치로 답함, POST가 아니�
   assert.equal(json.before.sha256, json.after.sha256);
   assert.equal(tables.vault_restore_audit.at(-1).outcome, 'already_matching');
   assert.equal((await call(tables, { id: NOTE_B, method: 'GET' })).status, 405);
+});
+
+test('감사 시작 줄 쓰기 실패 → 503 AUDIT_UNAVAILABLE, 메모·사본을 읽지도 쓰지도 않음', async () => {
+  for (const setup of [
+    tables => { noteOf(tables, NOTE_B).content = '변조된 본문'; },
+    tables => { tables.vault_notes = tables.vault_notes.filter(row => row.id !== NOTE_B); },
+  ]) {
+    const tables = seed();
+    setup(tables);
+    const before = JSON.stringify({ notes: tables.vault_notes, snaps: tables.vault_notes_snapshot });
+    const reads = [];
+    tables.onRead = name => reads.push(name);
+    tables.failAudit = row => row.outcome === 'restore_started';
+    const { status, json } = await call(tables, { id: NOTE_B });
+    assert.equal(status, 503);
+    assert.deepEqual(json, { error: 'AUDIT_UNAVAILABLE', restored: false });
+    assert.deepEqual(reads, []);
+    assert.equal(JSON.stringify({ notes: tables.vault_notes, snaps: tables.vault_notes_snapshot }), before);
+    assert.equal(tables.vault_restore_audit.length, 0);
+  }
+});
+
+test('복원 응답에 audit: { startId, resultId }, 시작 줄이 결과 줄보다 먼저', async () => {
+  const tables = seed();
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  const { status, json } = await call(tables, { id: NOTE_B });
+  assert.equal(status, 200);
+  const [start, result] = tables.vault_restore_audit;
+  assert.deepEqual(json.audit, { startId: start.audit_id, resultId: result.audit_id });
+  assert.ok(json.audit.startId < json.audit.resultId);
+  assert.equal(start.outcome, 'restore_started');
+  assert.equal(result.outcome, 'restored_modified');
+  assert.equal(tables.vault_restore_audit.length, 2);
+});
+
+test('결과 줄 쓰기 실패 → 500 AUDIT_FAILED, 시작 줄은 남고 지우지 않음', async () => {
+  const tables = seed();
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  tables.failAudit = row => row.outcome !== 'restore_started';
+  const { status, json } = await call(tables, { id: NOTE_B });
+  assert.equal(status, 500);
+  assert.deepEqual(json, { error: 'AUDIT_FAILED', restored: true, audit: { startId: 1, resultId: null } });
+  assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome), ['restore_started']);
+});
+
+test('dryRun: 변조·삭제 모두 plan만 답하고 메모·사본은 그대로, 감사 기록은 preview 한 줄', async () => {
+  for (const [setup, expectChanges, expectBefore] of [
+    [tables => { noteOf(tables, NOTE_B).content = '변조된 본문'; }, ['content'], noteSha256('B 메모', '변조된 본문')],
+    [tables => { tables.vault_notes = tables.vault_notes.filter(row => row.id !== NOTE_B); }, ['row_restored'], null],
+    [() => {}, [], noteSha256('B 메모', '가상 본문 B')],
+  ]) {
+    const tables = seed();
+    setup(tables);
+    const before = JSON.stringify({ notes: tables.vault_notes, snaps: tables.vault_notes_snapshot });
+    const snapshot = snapshotOf(tables, NOTE_B);
+    const { status, json } = await call(tables, { id: NOTE_B, body: { dryRun: true } });
+    assert.equal(status, 200);
+    assert.equal(json.dryRun, true);
+    assert.equal(json.restored, false);
+    assert.deepEqual(json.plan, { version: snapshot.snapshot_at, changes: expectChanges,
+      beforeSha256: expectBefore, backupSha256: snapshot.content_sha256 });
+    assert.equal(json.backup.verified, true);
+    assertNoContent(json);
+    assert.equal(JSON.stringify({ notes: tables.vault_notes, snaps: tables.vault_notes_snapshot }), before);
+    assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome), ['preview']);
+    assert.deepEqual(json.audit, { previewId: tables.vault_restore_audit[0].audit_id });
+  }
+});
+
+test('dryRun: 문자열 본문도 읽고, 사본 검증 실패면 409로 멈춤, preview 줄을 못 쓰면 503', async () => {
+  const tables = seed();
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  const preview = await call(tables, { id: NOTE_B, body: '{"dryRun":true}' });
+  assert.equal(preview.status, 200);
+  assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+
+  const broken = seed();
+  snapshotOf(broken, NOTE_B).content = '사본이 바뀜';
+  const failed = await call(broken, { id: NOTE_B, body: { dryRun: true } });
+  assert.equal(failed.status, 409);
+  assert.equal(failed.json.restored, false);
+  assert.deepEqual(broken.vault_restore_audit.map(row => row.outcome), ['preview']);
+
+  const noAudit = seed();
+  noAudit.failAudit = () => true;
+  const blocked = await call(noAudit, { id: NOTE_B, body: { dryRun: true } });
+  assert.equal(blocked.status, 503);
+  assert.deepEqual(blocked.json, { error: 'AUDIT_UNAVAILABLE', restored: false });
+});
+
+test('본문 모양이 틀리면 400 INVALID_BODY, 복원하지 않음. dryRun false·빈 객체는 복원', async () => {
+  for (const body of [{ dryRun: 'true' }, [1], 'not json', 7]) {
+    const tables = seed();
+    noteOf(tables, NOTE_B).content = '변조된 본문';
+    const { status, json } = await call(tables, { id: NOTE_B, body });
+    assert.equal(status, 400);
+    assert.equal(json.error, 'INVALID_BODY');
+    assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+  }
+  for (const body of [{ dryRun: false }, {}, '']) {
+    const tables = seed();
+    noteOf(tables, NOTE_B).content = '변조된 본문';
+    assert.equal((await call(tables, { id: NOTE_B, body })).status, 200);
+    assert.equal(noteOf(tables, NOTE_B).content, '가상 본문 B');
+  }
+});
+
+test('감사 기록은 insert만: 기존 줄은 바뀌거나 지워지지 않음', async () => {
+  const tables = seed();
+  const old = { audit_id: 1, actor_id: A, note_id: NOTE_A, outcome: 'restored_modified', content_sha256: null, matched: true };
+  tables.vault_restore_audit.push({ ...old });
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  await call(tables, { id: NOTE_B, body: { dryRun: true } });
+  await call(tables, { id: NOTE_B });
+  tables.vault_notes = tables.vault_notes.filter(row => row.id !== NOTE_B);
+  await call(tables, { id: NOTE_B });
+  assert.deepEqual(tables.vault_restore_audit[0], old);
+  assert.equal(tables.vault_restore_audit.length, 6);
 });

@@ -2,12 +2,14 @@
 //   npm run restore:live-check
 // B 계정으로 로그인해 B 메모 한 건을 앱 API로 변조·삭제하고 POST /api/restores/:id로 되살린 뒤,
 // 내용 해시가 처음과 같은지 확인합니다. A 메모는 건드리지 않습니다(B 로그인으로 보이는 B 메모 한 건만 씀).
+// 복원마다 먼저 {"dryRun": true}로 미리보기(버전·바뀔 항목)를 받고, 아무것도 안 바뀌었는지 본 뒤 복원합니다.
 // - 이메일·비밀번호는 실행할 때 물어보고 메모리에만 둡니다. 비밀번호는 화면에 보이지 않습니다.
 // - 로그인은 앱의 POST /api/auth/login으로 합니다. 그래서 publishable key가 필요 없습니다.
-// - 파일을 쓰지 않습니다. 출력에는 상태 코드, 일치 여부, id 앞 8자만 넣습니다.
-//   메모 제목·내용, 해시, 토큰, 이메일은 출력하지 않습니다.
+// - 출력에는 상태 코드, 일치 여부, id 앞 8자만 넣습니다. 메모 제목·내용, 해시, 토큰, 이메일은 출력하지 않습니다.
+// - 끝나면 artifacts/restore-live-result.json(Git 제외)에 실행 시각, 대상 커밋(배포된 /aleph.json의 commit),
+//   단계별 상태 코드·통과 여부·backup.verified·changes·audit id 개수만 저장합니다. 내용·토큰·이메일·해시는 넣지 않습니다.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { noteSha256 } from '../src/content-hash.mjs';
 
@@ -68,12 +70,34 @@ async function call(method, path, { token, body } = {}) {
   return { status: response.status, data };
 }
 
+// 단계 기록: 이름, 상태 코드, 통과 여부와 응답의 backup.verified·changes·audit id 개수만 남깁니다.
 const results = [];
-function record(label, pass, detail) {
-  results.push(pass);
+const auditCount = data => Object.values(data?.audit ?? {}).filter(value => value !== null && value !== undefined).length;
+function record(label, pass, detail, response = null) {
+  const step = { step: label, pass: Boolean(pass) };
+  if (response) {
+    step.status = response.status;
+    if (typeof response.data?.backup?.verified === 'boolean') step.backupVerified = response.data.backup.verified;
+    const changes = response.data?.plan?.changes ?? response.data?.changes;
+    if (Array.isArray(changes)) step.changes = changes.filter(item => typeof item === 'string').slice(0, 5);
+    if (response.data?.audit) step.auditIds = auditCount(response.data);
+  }
+  results.push(step);
   console.log(`${pass ? '통과' : '확인 필요'} · ${label} — ${detail}`);
   return pass;
 }
+
+// 미리보기: 사본 검증 표시, 아무것도 복원하지 않음, 미리보기 감사 id 하나, 바뀔 항목이 기대와 같음.
+const previewOk = (res, startHash, beforeHash, expected) => res.status === 200 && res.data?.dryRun === true
+  && res.data.restored === false && verifiedBackup({ ...res.data, sha256: res.data.plan?.backupSha256 })
+  && typeof res.data.plan?.version === 'string' && res.data.plan.backupSha256 === startHash
+  && res.data.plan.beforeSha256 === beforeHash
+  && JSON.stringify(res.data.plan.changes) === JSON.stringify(expected) && auditCount(res.data) === 1;
+// 복원: 시작 줄과 결과 줄 id가 둘 다 있고 시작이 먼저입니다.
+const auditPair = data => data?.audit?.startId != null && data?.audit?.resultId != null
+  && Number(data.audit.startId) < Number(data.audit.resultId);
+const previewDetail = res => `HTTP ${res.status}, dryRun ${res.data?.dryRun}, backup.verified ${res.data?.backup?.verified}, `
+  + `changes [${(res.data?.plan?.changes ?? []).join(',')}], restored ${res.data?.restored}${res.data?.error ? `, ${res.data.error}` : ''}`;
 
 async function currentHash(token, id) {
   const got = await call('GET', `/api/notes/${id}`, { token });
@@ -83,72 +107,95 @@ async function currentHash(token, id) {
   return { status: got.status, hash: noteSha256(got.data.title, got.data.body) };
 }
 
+// 시험한 배포의 커밋: 배포된 /aleph.json의 commit(공개 정보)입니다. 못 읽으면 null로 남깁니다.
+let targetCommit = null;
+async function readDeployedCommit() {
+  try {
+    const got = await call('GET', '/aleph.json');
+    return typeof got.data?.commit === 'string' && /^[0-9a-f]{40}$/u.test(got.data.commit) ? got.data.commit : null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   console.log(`대상 배포: ${app.origin} (이메일·비밀번호·메모 내용·토큰은 출력하지 않습니다)`);
+  targetCommit = await readDeployedCommit();
+  console.log(`배포된 커밋: ${targetCommit ? targetCommit.slice(0, 7) : '읽지 못함'}`);
   const email = await askEmail();
   let password = await askHidden('B 계정 비밀번호(화면에 보이지 않음): ');
   const login = await call('POST', '/api/auth/login', { body: { email, password } });
   password = '';
   const token = typeof login.data?.access_token === 'string' ? login.data.access_token : null;
-  if (!record('B 로그인', login.status === 200 && token, `HTTP ${login.status}`)) return;
+  if (!record('B 로그인', login.status === 200 && token, `HTTP ${login.status}`, { status: login.status })) return;
 
   let original = null;
   let state = 'clean';
   try {
     const list = await call('GET', '/api/notes', { token });
     const notes = Array.isArray(list.data) ? list.data : [];
-    if (!record('B 메모 목록', list.status === 200 && notes.length > 0, `HTTP ${list.status}, ${notes.length}건`)) return;
+    if (!record('B 메모 목록', list.status === 200 && notes.length > 0, `HTTP ${list.status}, ${notes.length}건`, { status: list.status })) return;
     const id = notes[0].id;
     chosenId = id;
     const first = await call('GET', `/api/notes/${id}`, { token });
-    if (!record(`메모 ${short(id)} 처음 읽기`, first.status === 200, `HTTP ${first.status}`)) return;
+    if (!record(`메모 ${short(id)} 처음 읽기`, first.status === 200, `HTTP ${first.status}`, { status: first.status })) return;
     original = { title: first.data.title, body: first.data.body };
     const startHash = noteSha256(original.title, original.body);
+    const preview = () => call('POST', `/api/restores/${id}`, { token, body: { dryRun: true } });
 
-    // 사본이 지금 내용과 같은지 먼저 봅니다. 다르면 아래 시험이 B의 정상 수정을 되돌리게 되므로 멈춥니다.
-    const pre = await call('POST', `/api/restores/${id}`, { token });
-    const preSame = pre.status === 200 && pre.data?.sha256 === startHash && pre.data?.matched === true
-      && verifiedBackup(pre.data) && pre.data.restored === false && changesOf(pre.data).length === 0;
-    if (!record('사본과 지금 내용 일치(시험 전)', preSame,
-      `HTTP ${pre.status}, 일치 ${preSame}, backup.verified ${pre.data?.backup?.verified}, restored ${pre.data?.restored}${pre.data?.error ? `, ${pre.data.error}` : ''}`)) {
-      if (pre.status === 200 && pre.data?.sha256 !== startHash) state = 'tampered';
-      return;
-    }
+    // 미리보기로 사본이 지금 내용과 같은지 먼저 봅니다(아무것도 쓰지 않음).
+    // 다르면 아래 시험이 B의 정상 수정을 되돌리게 되므로 멈춥니다.
+    const pre = await preview();
+    if (!record('미리보기: 사본과 지금 내용 일치(시험 전)', previewOk(pre, startHash, startHash, []), previewDetail(pre), pre)) return;
 
     state = 'tampered';
     const tamper = await call('PUT', `/api/notes/${id}`, { token, body: { title: original.title, body: original.body + TAMPER_MARK } });
     const afterTamper = await currentHash(token, id);
     record('앱 API로 변조(PUT)', tamper.status === 200 && afterTamper.hash !== startHash,
-      `HTTP ${tamper.status}, 내용이 처음과 다름 ${afterTamper.hash !== startHash}`);
+      `HTTP ${tamper.status}, 내용이 처음과 다름 ${afterTamper.hash !== startHash}`, { status: tamper.status });
+
+    const preview1 = await preview();
+    const stillTampered = (await currentHash(token, id)).hash === afterTamper.hash;
+    record('미리보기: 변조 뒤(버전·바뀔 항목만, 쓰지 않음)', previewOk(preview1, startHash, afterTamper.hash, ['content']) && stillTampered,
+      `${previewDetail(preview1)}, 미리보기 뒤에도 변조 그대로 ${stillTampered}`, preview1);
 
     const restored1 = await call('POST', `/api/restores/${id}`, { token });
     const check1 = await currentHash(token, id);
     const same1 = check1.hash === startHash;
     record('변조 뒤 복구', restored1.status === 200 && restored1.data?.matched === true && same1
-      && verifiedBackup(restored1.data) && restored1.data.restored === true && changesOf(restored1.data).includes('content'),
+      && verifiedBackup(restored1.data) && restored1.data.restored === true && changesOf(restored1.data).includes('content')
+      && auditPair(restored1.data),
       `HTTP ${restored1.status}, matched ${restored1.data?.matched}, backup.verified ${restored1.data?.backup?.verified}, `
-      + `changes [${changesOf(restored1.data).join(',')}], 다시 읽기 HTTP ${check1.status}, 처음과 같음 ${same1}`);
+      + `changes [${changesOf(restored1.data).join(',')}], 감사 시작·결과 ${auditPair(restored1.data)}, 다시 읽기 HTTP ${check1.status}, 처음과 같음 ${same1}`,
+      restored1);
     if (same1) state = 'clean';
 
     const removed = await call('DELETE', `/api/notes/${id}`, { token });
     const gone = await call('GET', `/api/notes/${id}`, { token });
     state = 'deleted';
     record('앱 API로 삭제(DELETE)', removed.status === 200 && gone.status === 404,
-      `HTTP ${removed.status}, 삭제 뒤 GET HTTP ${gone.status}`);
+      `HTTP ${removed.status}, 삭제 뒤 GET HTTP ${gone.status}`, { status: removed.status });
+
+    const preview2 = await preview();
+    const stillGone = (await call('GET', `/api/notes/${id}`, { token })).status === 404;
+    record('미리보기: 삭제 뒤(버전·바뀔 항목만, 쓰지 않음)', previewOk(preview2, startHash, null, ['row_restored']) && stillGone,
+      `${previewDetail(preview2)}, 미리보기 뒤에도 삭제 그대로 ${stillGone}`, preview2);
 
     const restored2 = await call('POST', `/api/restores/${id}`, { token });
     const check2 = await currentHash(token, id);
     const same2 = check2.hash === startHash;
     record('삭제 뒤 복구', restored2.status === 200 && restored2.data?.matched === true && same2
-      && verifiedBackup(restored2.data) && restored2.data.restored === true && changesOf(restored2.data).includes('row_restored'),
+      && verifiedBackup(restored2.data) && restored2.data.restored === true && changesOf(restored2.data).includes('row_restored')
+      && auditPair(restored2.data),
       `HTTP ${restored2.status}, matched ${restored2.data?.matched}, backup.verified ${restored2.data?.backup?.verified}, `
-      + `changes [${changesOf(restored2.data).join(',')}], 다시 읽기 HTTP ${check2.status}, 처음과 같음 ${same2}`);
+      + `changes [${changesOf(restored2.data).join(',')}], 감사 시작·결과 ${auditPair(restored2.data)}, 다시 읽기 HTTP ${check2.status}, 처음과 같음 ${same2}`,
+      restored2);
     if (same2) state = 'clean';
 
     const anonymous = await call('POST', `/api/restores/${id}`);
-    record('로그인 없이 복구', anonymous.status === 401, `HTTP ${anonymous.status} (기대 401)`);
+    record('로그인 없이 복구', anonymous.status === 401, `HTTP ${anonymous.status} (기대 401)`, { status: anonymous.status });
     const missing = await call('POST', `/api/restores/${randomUUID()}`, { token });
-    record('없는 id 복구', missing.status === 404, `HTTP ${missing.status} (기대 404)`);
+    record('없는 id 복구', missing.status === 404, `HTTP ${missing.status} (기대 404)`, missing);
   } finally {
     // 시험 중 멈췄다면 한 번 더 복구를 부르고, 그래도 안 되면 메모리의 처음 내용으로 되돌립니다.
     if (state !== 'clean' && original) {
@@ -178,9 +225,21 @@ async function putBack(token, original) {
 try {
   await main();
 } catch (error) {
-  results.push(false);
+  results.push({ step: '실행 오류', pass: false });
   console.error(`첫 오류: ${String(error?.message).slice(0, 120)}`);
 }
-const failed = results.filter(pass => !pass).length;
+const failed = results.filter(step => !step.pass).length;
 console.log(failed ? `확인 필요 ${failed}개` : `모두 통과 (${results.length}개)`);
+// 실제로 보낸 요청의 결과만 저장합니다. 실패해도 그대로 저장합니다(덮어씀).
+try {
+  const saved = {
+    schema: 'aleph.student.restore-live-result.v1', ranAt: new Date().toISOString(), targetCommit,
+    passed: results.length - failed, failed, steps: results,
+  };
+  mkdirSync(new URL('../artifacts/', import.meta.url), { recursive: true });
+  writeFileSync(new URL('../artifacts/restore-live-result.json', import.meta.url), `${JSON.stringify(saved, null, 2)}\n`);
+  console.log('결과 저장: artifacts/restore-live-result.json (Git 제외)');
+} catch (error) {
+  console.error(`결과 저장 실패: ${String(error?.message).slice(0, 120)}`);
+}
 process.exitCode = failed ? 1 : 0;

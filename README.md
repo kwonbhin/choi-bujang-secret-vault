@@ -110,7 +110,9 @@
 - **서비스·경로**: 메모 서비스(`notes`)의 복구 경로 `POST /api/restores/:id` 하나를 더했습니다(`api/restores/[id].js`, `src/restore-api.mjs`). `aleph.config.json`의 `restoreRoute`는 `"POST /api/restores/:id"`이고 `allowedRoutes`에도 넣었습니다. 빌드는 `restoreRoute`가 경로 형식이 아니거나 `allowedRoutes`에 없으면 멈추고, 맞으면 `/aleph.json`에 옮겨 적습니다. 메모 API `/api/notes`, `/api/notes/:id`의 동작은 그대로입니다.
 - **판정기는 바꾸지 않았습니다.** `src/decider.mjs`의 구역 규칙에는 복구 경로가 없어 엔진을 거치면 `starter.deny`로 거부됩니다. 복구 경로의 보안은 서버 함수가 맡습니다.
 - **복구 서버 함수**:
-  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다.
+  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다. 본문에서는 `dryRun`(true/false)만 읽고, 다른 모양(예: `{"dryRun":"true"}`, 배열)이면 400 `INVALID_BODY`로 복원하지 않습니다.
+  - **감사 기록 먼저**: 복원 전에 감사 기록에 시작 줄(`restore_started`)을 씁니다. 쓰지 못하면 메모·사본을 읽지도 쓰지도 않고 503 `{ error: "AUDIT_UNAVAILABLE", restored: false }`로 멈춥니다. 끝나면(성공·멈춤 모두) 결과 줄을 한 줄 더 쓰고, 응답에 `audit: { startId, resultId }`를 넣습니다. 결과 줄을 쓰지 못하면 500 `{ error: "AUDIT_FAILED", restored, audit: { startId, resultId: null } }`입니다. 감사 기록은 insert만 하고 update·delete는 하지 않습니다.
+  - **실행 전 미리보기**: 본문 `{"dryRun": true}`로 부르면 사본을 두 번 읽어 검증한 뒤 `plan: { version, changes, beforeSha256, backupSha256 }`과 `backup`만 답하고(`dryRun: true`, `restored: false`) 메모는 쓰지 않습니다. 감사 기록에는 `preview` 줄 하나만 남기고 응답에 `audit: { previewId }`를 넣습니다. 사본이 없거나 검증이 실패하면 미리보기도 같은 409로 멈춥니다. 본문이 없으면 지금처럼 복원합니다.
   - 사본의 `owner_id`가 로그인 사용자이고, 지금 행이 있으면 그 `owner_id`도 로그인 사용자여야 합니다. 아니면 남의 메모든 없는 메모든 같은 404 `NOTE_NOT_FOUND`입니다.
   - **멈추는 경우** (복원하지 않고, 로그인한 요청이므로 감사 기록은 남김):
     - 자기 메모가 지금 있는데 사본이 없으면 409 `{ error: "BACKUP_MISSING", restored: false }`
@@ -128,7 +130,8 @@
                   "recomputedSha256": "<사본을 다시 읽어 계산한 해시>", "rereadAt": "<복원 직전에 다시 읽은 시각>" },
       "before": { "exists": true, "sha256": "<복원 전 지금 행 해시, 없으면 null>" },
       "after": { "sha256": "<복원 뒤 다시 읽은 행 해시>" },
-      "changes": ["content"]
+      "changes": ["content"],
+      "audit": { "startId": 41, "resultId": 42 }
     }
     ```
 
@@ -136,7 +139,7 @@
 - **내용 해시**: `SHA-256( UTF-8(title) + 0x00 바이트 + UTF-8(content) )`의 소문자 16진수 64자입니다. Postgres는 `public.vault_note_sha256(title, content)`, JS는 `src/content-hash.mjs`의 `noteSha256(title, content)`로 같은 값을 냅니다. Postgres의 text에는 0x00이 없어서 제목·본문 경계가 섞이지 않습니다. 유니코드 정규화는 하지 않습니다. 한글 예시로 두 쪽 결과가 같은지 확인했습니다(PostgreSQL 16 PGlite, 로컬).
 - **사본과 감사 기록** (`supabase/restore.sql`):
   - `vault_notes_snapshot`: `vault_notes`의 칸(`id`, `owner_id`, `title`, `content`, `created_at`)에 `content_sha256`, `snapshot_at`을 더했습니다. `id`는 primary key(unique)입니다.
-  - `vault_restore_audit`: `actor_id`(로그인 사용자 ID), `note_id`, `outcome`, `content_sha256`, `matched`, `at`만 둡니다. 메모 내용과 토큰은 넣지 않습니다. 로그인한 복구 요청은 성공·실패 모두 한 줄 남기고, 기록을 쓰지 못하면 500 `AUDIT_FAILED`입니다. 로그인하지 않은 요청(401)은 남기지 않습니다(누구나 기록을 채우지 못하게).
+  - `vault_restore_audit`: `actor_id`(로그인 사용자 ID), `note_id`, `outcome`, `content_sha256`, `matched`, `at`만 둡니다. 메모 내용과 토큰은 넣지 않습니다. 로그인한 복구 요청은 시작 줄과 결과 줄 두 줄, 미리보기는 `preview` 한 줄, id·본문 형식 오류는 한 줄을 남깁니다. 로그인하지 않은 요청(401)은 남기지 않습니다(누구나 기록을 채우지 못하게). 새 칸이나 권한은 더하지 않았습니다(서버 함수는 insert 뒤 `audit_id`만 돌려받으며, 기존 `select`·`insert` 권한 안입니다).
   - 두 테이블 모두 만든 직후 PUBLIC·anon·authenticated·service_role 권한을 거두고 RLS를 켭니다(정책 없음). service_role에는 사본 `select`, 감사 기록 `select`·`insert`만 줍니다. 감사 기록의 `update`·`delete` 권한은 아무에게도 없습니다.
   - `vault_notes`에 AFTER INSERT 트리거만 걸어, 새 메모가 생기는 순간 사본을 뜹니다. 같은 id 사본이 있으면 아무것도 하지 않습니다(`ON CONFLICT DO NOTHING`). UPDATE·DELETE에는 걸지 않아, 변조·삭제를 당해도 처음 내용이 남습니다. 사본 쓰기는 트리거 함수(소유자 권한)만 하므로 서버 키로도 사본을 고칠 수 없습니다.
   - 함수 두 개(해시 함수, 트리거 함수)는 `search_path`를 `''`로 고정하고, 안에서 쓰는 이름에 `public.`·`pg_catalog.`를 붙였습니다. 두 함수의 실행 권한은 모두 거뒀습니다.
@@ -163,12 +166,14 @@
 
 - **실제 배포 복구 확인** `npm run restore:live-check` (학생이 Claude Code 밖의 자기 터미널에서 실행):
   - B 이메일과 비밀번호를 실행할 때 묻습니다. 비밀번호는 화면에 보이지 않고, 둘 다 파일·로그에 남지 않습니다. 로그인은 앱의 `POST /api/auth/login`으로 하므로 publishable key는 필요 없습니다.
-  - 순서: B 로그인 → B 메모 목록의 첫 메모 하나 고르기 → 해시 기록 → 사본과 지금 내용이 같은지 먼저 확인(다르면 멈추고 처음 내용으로 되돌림) → 앱 API로 변조(PUT) → 복구(`backup.verified` true, `changes`에 `content`) → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 복구(`backup.verified` true, `changes`에 `row_restored`) → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
+  - 순서: 배포된 `/aleph.json`의 commit 읽기 → B 로그인 → B 메모 목록의 첫 메모 하나 고르기 → 해시 기록 → 미리보기(`dryRun`)로 사본과 지금 내용이 같은지 확인(`changes` [], 다르면 아무것도 안 바꾸고 멈춤) → 앱 API로 변조(PUT) → 미리보기(`changes` [content], 메모는 변조 그대로) → 복구(`backup.verified` true, `changes`에 `content`, 감사 `startId` < `resultId`) → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 미리보기(`changes` [row_restored], 메모는 삭제 그대로) → 복구(`backup.verified` true, `changes`에 `row_restored`, 감사 id 두 개) → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
   - 출력은 상태 코드, 일치 여부, id 앞 8자뿐입니다. 메모 제목·내용, 해시, 토큰, 이메일은 출력하지 않습니다. B 로그인으로 보이는 B 메모 한 건만 쓰고 A 메모는 건드리지 않습니다. 시험이 중간에 멈추면 복구를 한 번 더 부르고, 그래도 안 되면 메모리에 둔 처음 내용으로 다시 씁니다.
-  - 정상: `모두 통과 (10개)`. 거부되어야 할 결과: `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
-  - **실제 결과** (2026-10-14, 배포 커밋 `922b398`, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. 변조 뒤 복구 `backup.verified` true·`changes` [content], 삭제 뒤 복구 `changes` [row_restored], 로그인 없이 복구 401, 없는 id 복구 404. (그 전 `b613f24`에서도 응답 검증 칸이 없던 버전으로 `모두 통과 (10개)`였습니다.)
+  - 끝나면 `artifacts/restore-live-result.json`(Git 제외)에 실행 시각, 대상 커밋(배포된 `/aleph.json`의 commit), 단계별 상태 코드·통과 여부·`backup.verified`·`changes`·감사 id 개수만 저장합니다(실패해도 그대로 덮어씀). 메모 내용·토큰·이메일·해시는 넣지 않습니다.
+  - `npm run bundle`은 이 파일이 있고 대상 커밋이 지금 HEAD와 같을 때만 `restore_owner_flow_live`를 "실행(학생이 직접, 시각)"으로 적고 파일의 통과 수·상태 코드를 그대로 옮깁니다. 파일이 없거나 커밋이 다르면 "미실행"입니다. 그래서 커밋·push → 배포의 `/aleph.json` commit 확인 → `npm run restore:live-check` → `npm run bundle` 순서로 실행합니다.
+  - 정상: `모두 통과 (12개)`. 거부되어야 할 결과: `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
+  - **이전 실제 결과** (2026-10-14, 배포 커밋 `922b398`, 감사 먼저 쓰기·미리보기가 없던 버전, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. 변조 뒤 복구 `backup.verified` true·`changes` [content], 삭제 뒤 복구 `changes` [row_restored], 로그인 없이 복구 401, 없는 id 복구 404. 감사 먼저 쓰기·미리보기 버전의 실제 시험은 아직 미실행입니다.
 - **로컬 확인 순서** (로컬 시험이며 배포된 API나 심판 판정이 아닙니다):
-  1. `npm run test:restore`: 열두 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존)
+  1. `npm run test:restore`: 열아홉 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 본문 모양 오류 400, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
   2. `npm run policy:diff`: `사본 검증 통과`와 `지금 파일과 다른 항목이 없습니다.`
   3. 거부되어야 할 결과가 200으로 나오면 `src/restore-api.mjs`의 주인 조건을 확인합니다.
 

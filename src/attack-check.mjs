@@ -3,6 +3,42 @@
 // 실제 키 값의 모양만 찾습니다. "sb_secret_…" 같은 안내 문구는 키가 아닙니다.
 const SECRET_SHAPE = /sb_secret_[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\./u;
 
+// 10단계: 학생이 직접 실행한 npm run restore:live-check의 결과 파일(artifacts/restore-live-result.json, Git 제외)을 읽습니다.
+// 파일이 있고 그 대상 커밋(배포된 /aleph.json의 commit)이 지금 HEAD와 같을 때만 "실행"으로 적고, 아니면 미실행입니다.
+// 파일에 적힌 통과 수·상태 코드를 그대로 옮기고 고치지 않습니다.
+const LIVE_NOT_RUN = '미실행: B 계정 비밀번호가 필요해 제출 묶음에서는 보내지 않음. 학생이 터미널에서 npm run restore:live-check로 직접 확인';
+export async function liveRestoreObserved() {
+  const { readFileSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  let saved;
+  try {
+    saved = JSON.parse(readFileSync(new URL('../artifacts/restore-live-result.json', import.meta.url), 'utf8'));
+  } catch {
+    return `${LIVE_NOT_RUN} (결과 파일 없음)`;
+  }
+  let head = null;
+  try {
+    head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', windowsHide: true }).trim();
+  } catch { /* 커밋을 모르면 미실행으로 둡니다. */ }
+  const steps = Array.isArray(saved?.steps) ? saved.steps : [];
+  if (saved?.schema !== 'aleph.student.restore-live-result.v1' || !head || saved.targetCommit !== head
+      || Number.isNaN(Date.parse(saved.ranAt ?? '')) || !steps.length) {
+    return `${LIVE_NOT_RUN} (결과 파일의 대상 커밋 ${String(saved?.targetCommit ?? '없음').slice(0, 7)}이 지금 커밋 ${String(head).slice(0, 7)}과 다름)`;
+  }
+  const brief = name => {
+    const step = steps.find(item => item?.step === name);
+    if (!step) return `${name} 없음`;
+    return `${name} HTTP ${step.status}${step.pass ? ' 통과' : ' 확인 필요'}`
+      + `${typeof step.backupVerified === 'boolean' ? ` verified ${step.backupVerified}` : ''}`
+      + `${Array.isArray(step.changes) ? ` [${step.changes.join(',')}]` : ''}${Number.isInteger(step.auditIds) ? ` 감사id ${step.auditIds}` : ''}`;
+  };
+  const passed = steps.filter(step => step?.pass === true).length;
+  return `실행(학생이 직접, ${saved.ranAt}) 커밋 ${head.slice(0, 7)}: 통과 ${passed}/${steps.length}. `
+    + ['미리보기: 변조 뒤(버전·바뀔 항목만, 쓰지 않음)', '변조 뒤 복구', '미리보기: 삭제 뒤(버전·바뀔 항목만, 쓰지 않음)', '삭제 뒤 복구', '없는 id 복구']
+      .map(brief).join('; ').replace(/\(버전·바뀔 항목만, 쓰지 않음\)/gu, '')
+      .slice(0, 300 - 60);
+}
+
 function appUrl(config) {
   let app;
   try {
@@ -328,8 +364,8 @@ export async function runAttackChecks(config) {
             observed: `로그인 없이 ${await describe(anonymousRestore)} / 가짜 토큰 ${await describe(forgedRestore)}` },
           { attackId: 'restore_policy_snapshot', expected: '정책 사본(policy/manifest.json)의 sha256이 사본 파일과 맞고, 지금 정책 파일과 다른 항목이 0개',
             observed: `로컬 npm run policy:diff와 같은 검사: ${policy}` },
-          { attackId: 'restore_owner_flow_live', expected: 'B가 자기 메모를 변조·삭제한 뒤 복구하면 처음 해시와 같고, 없는 id는 404',
-            observed: '미실행: B 계정 비밀번호가 필요해 제출 묶음에서는 보내지 않음. 학생이 터미널에서 npm run restore:live-check로 직접 확인' },
+          { attackId: 'restore_owner_flow_live', expected: 'B가 자기 메모를 변조·삭제한 뒤 미리보기(dryRun)는 아무것도 안 바꾸고, 복구하면 처음 해시와 같고 감사 시작·결과 id가 있음, 없는 id는 404',
+            observed: await liveRestoreObserved() },
         );
       }
     }
