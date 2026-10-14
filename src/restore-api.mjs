@@ -8,6 +8,9 @@
 // - 복원 전에 사본 해시를 다시 계산해 대조하고, 다르면 복원하지 않고 409 BACKUP_VERIFICATION_FAILED로 멈춥니다.
 //   자기 메모가 있는데 사본이 없으면 409 BACKUP_MISSING으로 멈춥니다.
 // - 복원 직전에 사본을 한 번 더 읽어 검증한 그 행(version=snapshot_at, 해시)이 그대로인지 확인하고, 다르면 멈춥니다.
+// - 사본 봉인(src/backup-seal.mjs, 서버 키 HMAC): 사본을 읽을 때와 복원 직전 다시 읽을 때 모두 봉인 행을 다시 읽어
+//   다시 계산해 시간 일정 비교합니다. 봉인이 없거나 다르면 아무것도 쓰지 않고 409 BACKUP_VERIFICATION_FAILED(backup.sealed false).
+//   미리보기도 같습니다. 봉인 값과 키는 응답·로그에 넣지 않습니다.
 // - 지정한 한 건만: 변조됐으면 사본 내용으로 덮어쓰고, 삭제됐으면 같은 id·owner_id로 다시 넣습니다.
 //   다른 메모, 사본, 감사 기록은 바꾸지 않습니다. 감사 기록은 insert만 하고 update·delete는 하지 않습니다.
 // - 감사 먼저: 복원 전에 감사 기록에 시작 줄(restore_started)을 쓰고, 쓰지 못하면 메모·사본을 읽지도 쓰지도 않고
@@ -21,6 +24,7 @@ import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { noteSha256 } from './content-hash.mjs';
 import { createLoginVerifier } from './verify-login.mjs';
+import { SEAL_TABLE, createSealer } from './backup-seal.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const NOTES = 'vault_notes';
@@ -51,6 +55,7 @@ function loadDeps() {
     supabase: createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     }),
+    sealer: createSealer(key),
   };
   return cached;
 }
@@ -141,6 +146,15 @@ export function createRestoreHandler(getDeps = loadDeps) {
       const readBackup = async () => checked(await supabase.from(SNAPSHOT)
         .select('id, owner_id, title, content, created_at, content_sha256, snapshot_at')
         .eq('id', id).eq('owner_id', login.userId).maybeSingle());
+      // 봉인: 사본 행(id, owner_id, content_sha256)으로 다시 계산해 저장된 봉인과 비교합니다. 실패 이유만 돌려줍니다.
+      const sealProblem = async row => {
+        const sealRow = checked(await supabase.from(SEAL_TABLE)
+          .select('note_id, owner_id, content_sha256, seal').eq('note_id', id).maybeSingle());
+        if (!sealRow) return 'stopped_seal_missing';
+        const ok = Boolean(deps.sealer) && deps.sealer.verify(sealRow,
+          { noteId: row.id, ownerId: row.owner_id, contentSha256: row.content_sha256 });
+        return ok ? null : 'stopped_seal_mismatch';
+      };
       const readMine = async () => checked(await supabase.from(NOTES)
         .select('id, owner_id, title, content').eq('id', id).eq('owner_id', login.userId).maybeSingle());
       const backup = await readBackup();
@@ -164,6 +178,14 @@ export function createRestoreHandler(getDeps = loadDeps) {
         await stopUnverified('backup_verification_failed');
         return;
       }
+      const stopUnsealed = outcome => finish(409, {
+        error: 'BACKUP_VERIFICATION_FAILED', restored: false, backup: { verified: false, sealed: false, version },
+      }, outcome, backup.content_sha256, false);
+      const firstSeal = await sealProblem(backup);
+      if (firstSeal) {
+        await stopUnsealed(firstSeal);
+        return;
+      }
       // 3. 지금 행: 있으면 주인이 로그인 사용자여야 합니다. 다르면 덮어쓰지 않고 같은 404입니다.
       const current = checked(await supabase.from(NOTES)
         .select('id, owner_id, title, content').eq('id', id).maybeSingle());
@@ -181,9 +203,15 @@ export function createRestoreHandler(getDeps = loadDeps) {
         await stopUnverified('backup_changed');
         return;
       }
+      // 복원 직전에도 봉인을 다시 읽어 다시 계산합니다.
+      const secondSeal = await sealProblem(reread);
+      if (secondSeal) {
+        await stopUnsealed(secondSeal);
+        return;
+      }
       // 바뀔 항목: 삭제됐으면 row_restored, 아니면 사본과 다른 칸 이름. 내용은 남기지 않습니다.
       const changes = current ? ['title', 'content'].filter(key => current[key] !== reread[key]) : ['row_restored'];
-      const backupInfo = { verified: true, version, sha256: backup.content_sha256, recomputedSha256: recomputed, rereadAt };
+      const backupInfo = { verified: true, sealed: true, version, sha256: backup.content_sha256, recomputedSha256: recomputed, rereadAt };
       if (dryRun) {
         await finish(200, {
           id, dryRun: true, restored: false,

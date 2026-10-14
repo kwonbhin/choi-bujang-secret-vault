@@ -369,7 +369,7 @@ export async function runAttackChecks(config) {
             observed: `로그인 없이 ${await describe(anonymousRestore)} / 가짜 토큰 ${await describe(forgedRestore)}` },
           { attackId: 'restore_policy_snapshot', expected: '안전 정책 사본의 sha256·revision이 manifest와 맞고, 가상 시험 정책과 바뀔 항목이 0개, 운영 판정기는 바뀌지 않음',
             observed: `로컬 npm run policy:diff와 같은 검사: ${policy}` },
-          { attackId: 'restore_owner_flow_live', expected: 'B가 자기 메모를 변조·삭제한 뒤 미리보기(dryRun)는 아무것도 안 바꾸고, 복구하면 처음 해시와 같고 감사 시작·결과 id가 있음, 없는 id는 404',
+          { attackId: 'restore_owner_flow_live', expected: 'B가 새로 만든 시험 메모(봉인됨)를 변조·삭제한 뒤 미리보기는 안 바꾸고, 복구하면 처음 해시와 같고 sealed true·감사 시작·결과 id 있음, 봉인 없는 기존 메모는 409, 없는 id는 404',
             observed: await liveRestoreObserved() },
         );
       }

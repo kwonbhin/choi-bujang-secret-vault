@@ -1,7 +1,9 @@
 // 10단계 실제 배포 복구 확인입니다. 학생 설계(계약에 없음). 학생이 자기 터미널에서 직접 실행합니다.
 //   npm run restore:live-check
-// B 계정으로 로그인해 B 메모 한 건을 앱 API로 변조·삭제하고 POST /api/notes/:id/restore로 되살린 뒤,
-// 내용 해시가 처음과 같은지 확인합니다. A 메모는 건드리지 않습니다(B 로그인으로 보이는 B 메모 한 건만 씀).
+// B 계정으로 로그인해 시험용 가상 메모를 새로 만들고(생성 직후 서버가 사본 봉인을 남김), 그 메모를 앱 API로
+// 변조·삭제한 뒤 POST /api/notes/:id/restore로 되살려 내용 해시가 처음과 같은지 확인합니다. 시험 메모는 끝나도 남겨 둡니다.
+// 기존 B 메모(id 앞 8자 9b10ccba)는 봉인이 없으므로 복구가 409(backup.sealed false)인지 한 번만 봅니다(쓰지 않음).
+// A 메모는 건드리지 않습니다.
 // 복원마다 먼저 {"dryRun": true}로 미리보기(버전·바뀔 항목)를 받고, 아무것도 안 바뀌었는지 본 뒤 복원합니다.
 // - 이메일·비밀번호는 실행할 때 물어보고 메모리에만 둡니다. 비밀번호는 화면에 보이지 않습니다.
 // - 로그인은 앱의 POST /api/auth/login으로 합니다. 그래서 publishable key가 필요 없습니다.
@@ -16,9 +18,13 @@ import { noteSha256 } from '../src/content-hash.mjs';
 const config = JSON.parse(readFileSync(new URL('../aleph.config.json', import.meta.url), 'utf8'));
 const app = new URL(config.publicAppUrl);
 const TAMPER_MARK = '\n[restore-live-check 변조 시험]';
+// 시험용 가상 메모(실제 정보 아님). 봉인은 서버가 생성 직후에 남깁니다.
+const TEST_NOTE = { title: 'live-check 시험 메모', body: 'live-check 시험 메모입니다. 복구 시험용 가상 문장이며 실제 정보가 아닙니다.' };
+// 봉인 도입 전에 만든 기존 B 메모의 id 앞 8자(봉인 없음 → 409 확인용).
+const LEGACY_PREFIX = '9b10ccba';
 const short = id => String(id).slice(0, 8);
 // 복구 응답의 검증 표시: backup.verified, 사본 해시와 다시 계산한 해시가 같음, 다시 읽은 시각, version이 있음.
-const verifiedBackup = data => data?.backup?.verified === true && typeof data.backup.version === 'string'
+const verifiedBackup = data => data?.backup?.verified === true && data.backup.sealed === true && typeof data.backup.version === 'string'
   && data.backup.sha256 === data.backup.recomputedSha256 && data.backup.sha256 === data.sha256
   && !Number.isNaN(Date.parse(data.backup.rereadAt ?? ''));
 const changesOf = data => (Array.isArray(data?.changes) ? data.changes : []);
@@ -135,7 +141,21 @@ async function main() {
     const list = await call('GET', '/api/notes', { token });
     const notes = Array.isArray(list.data) ? list.data : [];
     if (!record('B 메모 목록', list.status === 200 && notes.length > 0, `HTTP ${list.status}, ${notes.length}건`, { status: list.status })) return;
-    const id = notes[0].id;
+
+    // 기존 메모(봉인 없음): 복구를 불러도 봉인 검증에서 쓰기 전에 멈춰 409여야 합니다.
+    const legacy = notes.find(note => typeof note?.id === 'string' && note.id.startsWith(LEGACY_PREFIX));
+    if (legacy) {
+      const old = await call('POST', `/api/notes/${legacy.id}/restore`, { token });
+      record(`기존 메모 ${LEGACY_PREFIX} 복구(봉인 없음)`, old.status === 409 && old.data?.backup?.sealed === false && old.data?.restored === false,
+        `HTTP ${old.status} (기대 409), backup.sealed ${old.data?.backup?.sealed}, restored ${old.data?.restored}`, old);
+    } else {
+      record(`기존 메모 ${LEGACY_PREFIX} 복구(봉인 없음)`, false, '목록에 없어 미실행', null);
+    }
+
+    // 시험용 가상 메모를 새로 만듭니다. 서버가 생성 직후 사본 봉인을 남깁니다.
+    const created = await call('POST', '/api/notes', { token, body: TEST_NOTE });
+    const id = typeof created.data?.id === 'string' ? created.data.id : null;
+    if (!record('시험 메모 만들기', created.status === 201 && id, `HTTP ${created.status}${id ? `, id ${short(id)}` : ''}`, { status: created.status })) return;
     chosenId = id;
     const first = await call('GET', `/api/notes/${id}`, { token });
     if (!record(`메모 ${short(id)} 처음 읽기`, first.status === 200, `HTTP ${first.status}`, { status: first.status })) return;

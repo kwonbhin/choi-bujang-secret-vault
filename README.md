@@ -195,6 +195,20 @@
     - 미리보기 뒤 사본이나 시험 정책이 바뀌면 중단
     - CRLF 사본도 LF 기준 sha256으로 검증됨
     - 운영 판정기는 바뀌지 않음
+- **사본 봉인(서버 키 HMAC)** (`src/backup-seal.mjs`, `supabase/step10_backup_seal.sql`):
+  - 봉인 표 `vault_notes_backup_seal`(note_id PK, owner_id, content_sha256, seal, sealed_at).
+    - RLS 켜짐, PUBLIC·anon·authenticated 권한 없음, service_role은 insert·select만입니다.
+    - update·delete·truncate는 트리거로 막습니다(추가만 됨).
+  - 봉인 값은 서버 전용 키 `SUPABASE_SECRET_KEY`에서 HKDF-SHA256(라벨 `vault-backup-seal-v1`)로 뽑은 키로 계산한 HMAC-SHA256(`note_id|owner_id|content_sha256`)입니다. DB는 키를 모르고, 키 원문과 봉인 값은 로그·응답에 넣지 않습니다.
+  - 만들기: 새 메모가 `POST /api/notes`로 생긴 직후, 사본 행(`vault_notes_snapshot`, AFTER INSERT 트리거가 만든 것)을 다시 읽어 그 해시로 봉인을 한 번만 넣습니다(이미 있으면 그대로). 봉인 쓰기가 실패해도 메모 생성 응답(201 `{id}`)은 같고, 오류 코드만 로그에 남습니다.
+  - 복원 검증: 사본을 읽을 때와 복원 직전 다시 읽을 때 모두 봉인 행을 다시 읽어 다시 계산하고 시간 일정 비교합니다.
+    - 봉인이 없거나 다르면 아무것도 쓰지 않고 409 `BACKUP_VERIFICATION_FAILED`(`backup.sealed` false)입니다.
+    - 감사 기록에는 `stopped_seal_missing` 또는 `stopped_seal_mismatch`가 남습니다. 미리보기도 같습니다.
+    - 성공 응답의 `backup`에는 `sealed: true`가 붙습니다.
+    - 사본 내용과 `content_sha256`을 함께 바꿔 해시 검사를 통과해도, 서버 키 없이는 맞는 봉인을 만들 수 없어 잡힙니다.
+  - 봉인 도입 전에 만든 기존 메모는 봉인이 없어 복구가 409로 멈춥니다(설계대로, 기존 메모에 봉인을 뒤늦게 붙이지 않음).
+  - 실행 순서: ① SQL Editor에서 `supabase/step10_backup_seal.sql`(마지막 표로 권한·RLS·트리거 확인) → ② 커밋 push·배포 확인 → ③ `npm run restore:live-check`(시험 메모를 새로 만들어 봉인된 메모로 시험). ①보다 배포가 먼저면 봉인 쓰기가 실패해(로그에 코드만) 새 메모도 봉인 없이 남고, 복구는 409가 됩니다.
+  - 로컬 확인: PGlite 가짜 DB에서 SQL을 두 번 실행해 결과 표가 기대값이었고, 수정·삭제·비우기·중복 note_id·형식이 틀린 봉인이 막혔습니다(실제 Supabase는 미실행).
 - **DB 안전 정책(vault_notes RLS·정책·권한) 사본·검증·차이·복원** (`supabase/step10_policy_backup.sql`, `supabase/step10_policy_restore_test.sql`, 학생이 SQL Editor에서 직접 실행):
   - 표: `vault_policy_backup`(version, snapshot jsonb, snapshot_sha256, captured_at), `vault_policy_audit`(추가만). 두 표 모두 RLS 켜짐, PUBLIC·anon·authenticated·service_role 권한 없음, UPDATE·DELETE·TRUNCATE는 트리거로 막음.
   - 함수(모두 security definer, `search_path ''`, 실행 권한은 PUBLIC·anon·authenticated·service_role에서 거둠 → SQL Editor에서만):
@@ -246,14 +260,15 @@
 
 - **실제 배포 복구 확인** `npm run restore:live-check` (학생이 Claude Code 밖의 자기 터미널에서 실행):
   - B 이메일과 비밀번호를 실행할 때 묻습니다. 비밀번호는 화면에 보이지 않고, 둘 다 파일·로그에 남지 않습니다. 로그인은 앱의 `POST /api/auth/login`으로 하므로 publishable key는 필요 없습니다.
-  - 순서: 배포된 `/aleph.json`의 commit 읽기 → B 로그인 → B 메모 목록의 첫 메모 하나 고르기 → 해시 기록 → 미리보기(`dryRun`)로 사본과 지금 내용이 같은지 확인(`changes` [], 다르면 아무것도 안 바꾸고 멈춤) → 앱 API로 변조(PUT) → 미리보기(`changes` [content], 메모는 변조 그대로) → 복구(`backup.verified` true, `changes`에 `content`, 감사 `startId` < `resultId`) → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 미리보기(`changes` [row_restored], 메모는 삭제 그대로) → 복구(`backup.verified` true, `changes`에 `row_restored`, 감사 id 두 개) → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
+  - 순서: 배포된 `/aleph.json`의 commit 읽기 → B 로그인 → B 메모 목록 → 봉인 없는 기존 메모(id 앞 8자 `9b10ccba`) 복구가 409(`backup.sealed` false)인지 확인(쓰지 않음) → 시험용 가상 메모 새로 만들기(`POST /api/notes`, 서버가 생성 직후 봉인) → 해시 기록 → 미리보기(`dryRun`)로 사본과 지금 내용이 같은지 확인(`changes` [], 다르면 아무것도 안 바꾸고 멈춤) → 앱 API로 변조(PUT) → 미리보기(`changes` [content], 메모는 변조 그대로) → 복구(`backup.verified` true, `changes`에 `content`, 감사 `startId` < `resultId`) → 처음 해시와 같은지 → 앱 API로 삭제(DELETE) → 미리보기(`changes` [row_restored], 메모는 삭제 그대로) → 복구(`backup.verified` true, `changes`에 `row_restored`, 감사 id 두 개) → 다시 같은지 → 로그인 없이 복구(401 기대) → 없는 id 복구(404 기대) → 로그아웃.
   - 출력은 상태 코드, 일치 여부, id 앞 8자뿐입니다. 메모 제목·내용, 해시, 토큰, 이메일은 출력하지 않습니다. B 로그인으로 보이는 B 메모 한 건만 쓰고 A 메모는 건드리지 않습니다. 시험이 중간에 멈추면 복구를 한 번 더 부르고, 그래도 안 되면 메모리에 둔 처음 내용으로 다시 씁니다.
   - 끝나면 `artifacts/restore-live-result.json`(Git 제외)에 실행 시각, 대상 커밋(배포된 `/aleph.json`의 commit), 단계별 상태 코드·통과 여부·`backup.verified`·`changes`·감사 id 개수만 저장합니다(실패해도 그대로 덮어씀). 메모 내용·토큰·이메일·해시는 넣지 않습니다.
   - `npm run bundle`은 이 파일이 있고 대상 커밋이 지금 HEAD와 같을 때만 `restore_owner_flow_live`를 "실행(학생이 직접, 시각)"으로 적고 파일의 통과 수·상태 코드를 그대로 옮깁니다. 파일이 없거나 커밋이 다르면 "미실행"입니다. 그래서 커밋·push → 배포의 `/aleph.json` commit 확인 → `npm run restore:live-check` → `npm run bundle` 순서로 실행합니다.
-  - 정상: `모두 통과 (12개)`. 거부되어야 할 결과: `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
+  - 복구 성공 응답은 `backup.sealed` true여야 통과입니다. 시험 메모("live-check 시험 메모", 가상 문장)는 끝나도 지우지 않고 남겨 둡니다(봉인 표는 추가만 되고, 다음 실행은 새 시험 메모를 만듭니다).
+  - 정상: `모두 통과 (14개)`. 거부되어야 할 결과: `기존 메모 9b10ccba 복구(봉인 없음) — HTTP 409`, `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
   - **이전 실제 결과** (2026-10-14, 배포 커밋 `922b398`, 감사 먼저 쓰기·미리보기가 없던 버전, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. 변조 뒤 복구 `backup.verified` true·`changes` [content], 삭제 뒤 복구 `changes` [row_restored], 로그인 없이 복구 401, 없는 id 복구 404. 감사 먼저 쓰기·미리보기 버전의 실제 시험은 아직 미실행입니다.
 - **로컬 확인 순서** (로컬 시험이며 배포된 API나 심판 판정이 아닙니다):
-  1. `npm run test:restore`: 스무 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 미리보기 조건(본문 true·"true", 쿼리 ?dryRun=true), 그 밖의 본문(없음·{}·다른 칸·깨진 JSON·false 등)은 400 없이 복원, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
+  1. `npm run test:restore`: 스물일곱 줄 모두 `✔`(사본 봉인: 봉인 없음·봉인 다름·사본과 해시를 함께 바꿈·복원 직전 봉인 바뀜은 409, 정상 봉인은 sealed true, 봉인 만들기 한 번만, 메모 생성 직후 봉인과 봉인 실패 시에도 201; B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 미리보기 조건(본문 true·"true", 쿼리 ?dryRun=true), 그 밖의 본문(없음·{}·다른 칸·깨진 JSON·false 등)은 400 없이 복원, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
   2. `npm run test:policy`: 여덟 줄 모두 `✔`. `npm run policy:diff`: `안전 정책 사본 검증 통과`, 모든 서비스 `없음`, `B가 A 메모 읽기 … 지금 시험 정책 거부`, 종료 코드 0
   3. 거부되어야 할 결과가 200으로 나오면 `src/restore-api.mjs`의 주인 조건을 확인합니다.
 
@@ -331,6 +346,7 @@
    | 9 | `supabase/restore-snapshot-existing.sql` | 지금 있는 메모를 한 번 사본으로 뜸. 실행 전에 `supabase/notes-review.local.sql`(Git에 없음)로 메모가 정상인지 확인 | 있음 |
    | 10 | `supabase/step10_policy_backup.sql` | 10단계 DB 안전 정책 사본 표·함수, 침해 전 사본 `s9-safe-1` | 있음 |
    | 11 | `supabase/step10_policy_restore_test.sql` | 10단계 침공 흉내 → 미리보기 → 복원 → 확인(실패하면 전부 취소) | 있음 |
+   | 12 | `supabase/step10_backup_seal.sql` | 10단계 사본 봉인 표·권한·수정 막는 트리거(코드 배포 전에 실행) | 있음 |
 
    `*.local.sql`이 없으면 3·4번 대신 화면에서 로그인해 메모를 추가합니다. 대조 조회가 있는 파일은 구역 [1]·[2]·[3]을 각각 선택해 실행하면 적용 전후 권한을 비교할 수 있습니다.
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.

@@ -4,6 +4,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { noteSha256 } from '../src/content-hash.mjs';
 import { createRestoreHandler } from '../src/restore-api.mjs';
+import { createSealer, sealNewNote } from '../src/backup-seal.mjs';
+import { createNotesHandler } from '../src/notes-api.mjs';
+
+// 시험 전용 가짜 키입니다. 실제 서버 키가 아닙니다.
+const SEALER = createSealer('test-only-fake-server-key');
 
 const A = 'a0000000-0000-4000-8000-0000000000aa';
 const B = 'b0000000-0000-4000-8000-0000000000bb';
@@ -17,7 +22,12 @@ function seed() {
   const notes = [note(NOTE_A, A, 'A 메모', '가상 본문 A'), note(NOTE_B, B, 'B 메모', '가상 본문 B'),
     note(NOTE_B2, B, 'B 다른 메모', '가상 본문 B2')];
   const vault_notes_snapshot = notes.map(n => ({ ...n, content_sha256: noteSha256(n.title, n.content), snapshot_at: n.created_at }));
-  return { vault_notes: notes.map(n => ({ ...n })), vault_notes_snapshot, vault_restore_audit: [] };
+  // 봉인: 메모가 생길 때 남긴 것처럼 사본마다 하나씩 둡니다.
+  const vault_notes_backup_seal = vault_notes_snapshot.map(row => ({
+    note_id: row.id, owner_id: row.owner_id, content_sha256: row.content_sha256,
+    seal: SEALER.seal(row.id, row.owner_id, row.content_sha256), sealed_at: row.created_at,
+  }));
+  return { vault_notes: notes.map(n => ({ ...n })), vault_notes_snapshot, vault_notes_backup_seal, vault_restore_audit: [] };
 }
 
 // 응답 어디에도 메모 제목·본문이 없어야 합니다.
@@ -58,10 +68,13 @@ function fakeSupabase(tables) {
             };
             return { select: () => ({ single: async () => write() }) };
           }
-          if (rows.some(existing => existing.id === row.id)) {
+          const keyOf = item => item.id ?? item.note_id;
+          if (tables.failInsert?.(name, row)) return Promise.resolve({ error: { code: '42501' } });
+          if (rows.some(existing => keyOf(existing) === keyOf(row))) {
             return Promise.resolve({ error: { code: '23505' } });
           }
           rows.push({ ...row });
+          tables.afterInsert?.(name, row, tables);
           return Promise.resolve({ error: null });
         },
       };
@@ -75,6 +88,7 @@ async function call(tables, { user = B, method = 'POST', id, body, query = {}, a
   const handler = createRestoreHandler(() => ({
     verifyLogin: async header => (header === 'Bearer good' ? { userId: user } : null),
     supabase: fakeSupabase(tables),
+    sealer: SEALER,
   }));
   let status;
   let json;
@@ -86,6 +100,7 @@ async function call(tables, { user = B, method = 'POST', id, body, query = {}, a
 }
 
 const snapshotOf = (tables, id) => tables.vault_notes_snapshot.find(row => row.id === id);
+const sealOf = (tables, id) => tables.vault_notes_backup_seal.find(row => row.note_id === id);
 const noteOf = (tables, id) => tables.vault_notes.find(row => row.id === id);
 const withoutAudit = ({ audit, ...rest }) => rest;
 
@@ -100,7 +115,9 @@ test('B 메모 변조 → 복구 성공, 해시 일치, 응답에 내용 없음'
   assert.equal(json.restored, true);
   assert.equal(json.matched, true);
   assert.equal(json.sha256, snapshot.content_sha256);
-  assert.deepEqual(Object.keys(json.backup).sort(), ['recomputedSha256', 'rereadAt', 'sha256', 'verified', 'version']);
+  assert.deepEqual(Object.keys(json.backup).sort(), ['recomputedSha256', 'rereadAt', 'sealed', 'sha256', 'verified', 'version']);
+  assert.equal(json.backup.sealed, true);
+  assert.doesNotMatch(JSON.stringify(json), new RegExp(sealOf(tables, NOTE_B).seal));
   assert.equal(json.backup.verified, true);
   assert.equal(json.backup.version, snapshot.snapshot_at);
   assert.equal(json.backup.sha256, snapshot.content_sha256);
@@ -389,4 +406,140 @@ test('감사 기록은 insert만: 기존 줄은 바뀌거나 지워지지 않음
   await call(tables, { id: NOTE_B });
   assert.deepEqual(tables.vault_restore_audit[0], old);
   assert.equal(tables.vault_restore_audit.length, 6);
+});
+
+test('봉인 없음 → 409 BACKUP_VERIFICATION_FAILED(sealed false), 아무것도 안 씀, 감사 stopped_seal_missing', async () => {
+  for (const setup of [
+    tables => { noteOf(tables, NOTE_B).content = '변조된 본문'; },
+    tables => { tables.vault_notes = tables.vault_notes.filter(row => row.id !== NOTE_B); },
+  ]) {
+    const tables = seed();
+    setup(tables);
+    tables.vault_notes_backup_seal = tables.vault_notes_backup_seal.filter(row => row.note_id !== NOTE_B);
+    const before = JSON.stringify(tables.vault_notes);
+    const { status, json } = await call(tables, { id: NOTE_B });
+    assert.equal(status, 409);
+    assert.deepEqual(withoutAudit(json), { error: 'BACKUP_VERIFICATION_FAILED', restored: false,
+      backup: { verified: false, sealed: false, version: snapshotOf(tables, NOTE_B).snapshot_at } });
+    assert.equal(JSON.stringify(tables.vault_notes), before);
+    assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome), ['restore_started', 'stopped_seal_missing']);
+  }
+});
+
+test('봉인 값이 다름 → 409(sealed false), 감사 stopped_seal_mismatch', async () => {
+  const tables = seed();
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  sealOf(tables, NOTE_B).seal = SEALER.seal(NOTE_B, B, noteSha256('다른', '내용'));
+  const { status, json } = await call(tables, { id: NOTE_B });
+  assert.equal(status, 409);
+  assert.equal(json.backup.sealed, false);
+  assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+  assert.equal(tables.vault_restore_audit.at(-1).outcome, 'stopped_seal_mismatch');
+  // 봉인 행의 주인 칸만 바꿔도 같은 결과입니다.
+  const other = seed();
+  sealOf(other, NOTE_B).owner_id = A;
+  assert.equal((await call(other, { id: NOTE_B })).status, 409);
+  assert.equal(other.vault_restore_audit.at(-1).outcome, 'stopped_seal_mismatch');
+});
+
+test('사본만 바뀌고 해시도 맞춘 경우 → 해시 검사는 통과하지만 봉인으로 잡힘(409), 메모는 그대로', async () => {
+  for (const dryRun of [false, true]) {
+    const tables = seed();
+    noteOf(tables, NOTE_B).content = '변조된 본문';
+    const snapshot = snapshotOf(tables, NOTE_B);
+    snapshot.content = '사본이 바뀜';
+    snapshot.content_sha256 = noteSha256(snapshot.title, snapshot.content);
+    const { status, json } = await call(tables, { id: NOTE_B, body: dryRun ? { dryRun: true } : undefined });
+    assert.equal(status, 409);
+    assert.equal(json.error, 'BACKUP_VERIFICATION_FAILED');
+    assert.equal(json.backup.sealed, false);
+    assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+    assert.equal(tables.vault_restore_audit.at(-1).outcome, dryRun ? 'preview' : 'stopped_seal_mismatch');
+  }
+});
+
+test('복원 직전에 봉인이 사라지거나 바뀌면 → 409, 복원 안 됨', async () => {
+  for (const [change, outcome] of [
+    [t => { t.vault_notes_backup_seal = t.vault_notes_backup_seal.filter(row => row.note_id !== NOTE_B); }, 'stopped_seal_missing'],
+    [t => { sealOf(t, NOTE_B).seal = '0'.repeat(64); }, 'stopped_seal_mismatch'],
+  ]) {
+    const tables = seed();
+    noteOf(tables, NOTE_B).content = '변조된 본문';
+    let reads = 0;
+    tables.onRead = (name, n, t) => { if (name === 'vault_notes_snapshot' && n === 2) { reads = n; change(t); } };
+    const { status, json } = await call(tables, { id: NOTE_B });
+    assert.equal(reads, 2);
+    assert.equal(status, 409);
+    assert.equal(json.backup.sealed, false);
+    assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+    assert.equal(tables.vault_restore_audit.at(-1).outcome, outcome);
+  }
+});
+
+test('정상 봉인 → 변조·삭제 복구 성공(sealed true), 미리보기도 sealed true', async () => {
+  const tables = seed();
+  noteOf(tables, NOTE_B).content = '변조된 본문';
+  const preview = await call(tables, { id: NOTE_B, body: { preview: true } });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.json.backup.sealed, true);
+  assert.equal((await call(tables, { id: NOTE_B })).json.backup.sealed, true);
+  tables.vault_notes = tables.vault_notes.filter(row => row.id !== NOTE_B);
+  const restored = await call(tables, { id: NOTE_B });
+  assert.equal(restored.status, 200);
+  assert.deepEqual(restored.json.changes, ['row_restored']);
+  assert.equal(restored.json.backup.sealed, true);
+});
+
+test('봉인 만들기: 사본을 다시 읽어 한 번만 넣음, 이미 있으면 그대로, 사본 없으면 오류 코드', async () => {
+  const tables = seed();
+  const NEW = '55555555-5555-4555-8555-555555555555';
+  tables.vault_notes_snapshot.push({ id: NEW, owner_id: B, title: 't', content: '새 가상 본문',
+    created_at: '2026-10-14T00:00:00Z', content_sha256: noteSha256('t', '새 가상 본문'), snapshot_at: '2026-10-14T00:00:00Z' });
+  const supabase = fakeSupabase(tables);
+  assert.equal(await sealNewNote({ supabase, sealer: SEALER, noteId: NEW }), 'sealed');
+  const first = { ...sealOf(tables, NEW) };
+  assert.equal(SEALER.verify(first, { noteId: NEW, ownerId: B, contentSha256: noteSha256('t', '새 가상 본문') }), true);
+  assert.equal(await sealNewNote({ supabase, sealer: SEALER, noteId: NEW }), 'already_sealed');
+  assert.deepEqual(sealOf(tables, NEW), first);
+  assert.equal(tables.vault_notes_backup_seal.filter(row => row.note_id === NEW).length, 1);
+  await assert.rejects(sealNewNote({ supabase, sealer: SEALER, noteId: MISSING }), { code: 'seal_snapshot_missing' });
+  // 다른 키로 만든 봉인은 맞지 않습니다.
+  assert.equal(createSealer('another-fake-key').verify(first, { noteId: NEW, ownerId: B, contentSha256: first.content_sha256 }), false);
+});
+
+test('POST /api/notes: 생성 직후 사본으로 봉인, 봉인 쓰기가 실패해도 201 응답은 같고 오류 코드만 로그', async () => {
+  for (const failSeal of [false, true]) {
+    const tables = seed();
+    // AFTER INSERT 트리거 흉내: 메모가 생기면 사본을 뜹니다.
+    tables.afterInsert = (name, row, t) => {
+      if (name === 'vault_notes') t.vault_notes_snapshot.push({ ...row, created_at: '2026-10-14T00:00:00Z',
+        content_sha256: noteSha256(row.title, row.content), snapshot_at: '2026-10-14T00:00:00Z' });
+    };
+    tables.failInsert = name => failSeal && name === 'vault_notes_backup_seal';
+    const handler = createNotesHandler('collection', () => ({
+      verifyLogin: async header => (header === 'Bearer good' ? { userId: B } : null),
+      supabase: fakeSupabase(tables), sealer: SEALER,
+    }));
+    const logged = [];
+    const original = console.error;
+    console.error = (...args) => logged.push(args.join(' '));
+    let status;
+    let json;
+    try {
+      await handler({ method: 'POST', headers: { authorization: 'Bearer good' }, query: {}, body: { title: '가상 제목', body: 'live-check 시험 메모' } },
+        { setHeader() {}, status(code) { status = code; return { json(value) { json = value; } }; } });
+    } finally {
+      console.error = original;
+    }
+    assert.equal(status, 201);
+    assert.deepEqual(Object.keys(json), ['id']);
+    const sealRow = sealOf(tables, json.id);
+    if (failSeal) {
+      assert.equal(sealRow, undefined);
+      assert.deepEqual(logged, ['notes: 사본 봉인을 남기지 못했습니다. 42501']);
+    } else {
+      assert.equal(SEALER.verify(sealRow, { noteId: json.id, ownerId: B, contentSha256: snapshotOf(tables, json.id).content_sha256 }), true);
+      assert.deepEqual(logged, []);
+    }
+  }
 });

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from './verify-login.mjs';
+import { createSealer, sealNewNote } from './backup-seal.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const TITLE_MAX = 200;
@@ -28,6 +29,7 @@ function loadDeps() {
     supabase: createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     }),
+    sealer: createSealer(key),
   };
   return cached;
 }
@@ -75,13 +77,20 @@ const collection = {
       .eq('owner_id', login.userId).order('created_at', { ascending: true }));
     return [200, rows.map(toNote)];
   },
-  async POST({ supabase, login, request }) {
+  async POST({ supabase, login, request, sealer }) {
     const note = readNote(request.body, { allowId: true });
     const id = note.id ?? randomUUID();
     const { error } = await supabase.from(TABLE)
       .insert({ id, owner_id: login.userId, title: note.title, content: note.body });
     if (error?.code === '23505') throw new HttpError(409, 'NOTE_ID_TAKEN');
     if (error) throw error;
+    // 10단계: 사본(AFTER INSERT 트리거가 만든 행)을 다시 읽어 봉인을 한 번 남깁니다.
+    // 실패해도 메모 생성 응답은 그대로이고, 오류 코드만 로그에 남깁니다(키·봉인 값은 남기지 않음).
+    try {
+      await sealNewNote({ supabase, sealer, noteId: id });
+    } catch (sealError) {
+      console.error('notes: 사본 봉인을 남기지 못했습니다.', sealError?.code || 'unknown');
+    }
     return [201, { id }];
   },
 };
@@ -148,7 +157,7 @@ export function createNotesHandler(route, getDeps = loadDeps) {
     }
     try {
       const [status, body] = await routes[request.method]({
-        supabase: deps.supabase, login, request, id: id?.toLowerCase(),
+        supabase: deps.supabase, login, request, id: id?.toLowerCase(), sealer: deps.sealer,
       });
       send(status, body);
     } catch (error) {
