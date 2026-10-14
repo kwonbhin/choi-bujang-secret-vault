@@ -38,12 +38,44 @@ export async function checkDecider({ decide, ruleIds }) {
       decision: 'allow' },
     );
   }
+  // 10단계 복구 경로(학생 설계): 정책 버전 1일 때만 허용, 다른 경로 판정은 그대로인지 함께 봅니다.
+  if (ruleIds.includes('zone_note_restore')) {
+    const NOTE = 'b1b2c3d4-0000-4000-8000-000000000001';
+    const like = overrides => ({ ...normal, requestId: randomUUID(), ...overrides });
+    const restore = overrides => like({ method: 'POST', route: 'POST /notes/:id/restore', path: `/notes/${NOTE}/restore`, ...overrides });
+    const noPolicy = restore({});
+    delete noPolicy.policyRevision;
+    checks.push(
+      { name: '복구 경로·정책 버전 1', request: restore({}), decision: 'allow', reasonCode: 'approved',
+        ruleIdsExact: ['device_registered', 'zone_note_restore', 'restore_verified_policy'] },
+      { name: '복구 경로·정책 버전 2', request: restore({ policyRevision: 2 }), decision: 'deny',
+        reasonCode: 'policy_unverified', ruleIdsExact: ['restore_verified_policy'] },
+      { name: '복구 경로·정책 버전 "1"(문자열)', request: restore({ policyRevision: '1' }), decision: 'deny', reasonCode: 'policy_unverified' },
+      { name: '복구 경로·정책 버전 없음', request: noPolicy, decision: 'deny', reasonCode: 'policy_unverified' },
+      { name: '복구 경로·미등록 기기', request: restore({ deviceRegistered: false }), decision: 'deny', reasonCode: 'device_not_registered' },
+      { name: '복구 경로·쿼리 붙음', request: restore({ queryLength: 7 }), decision: 'deny', reasonCode: 'starter_not_ready' },
+      { name: '복구 경로·:id에 기능 이름(export)', request: restore({ path: '/notes/export/restore' }), decision: 'deny', reasonCode: 'starter_not_ready' },
+      { name: '복구 경로·id 없음', request: restore({ path: '/notes/restore' }), decision: 'deny', reasonCode: 'starter_not_ready' },
+      { name: '복구 경로·뒤에 더 붙음', request: restore({ path: `/notes/${NOTE}/restore/x` }), decision: 'deny', reasonCode: 'starter_not_ready' },
+      { name: '복구 경로·GET 메서드', request: restore({ method: 'GET' }), decision: 'deny', reasonCode: 'starter_not_ready' },
+      { name: '복구 경로·복합 이상 접속', request: restore({ signals: suspicious.signals, recentEvents: suspicious.recentEvents }),
+        decision: 'step_up', reasonCode: 'step_up_required' },
+      { name: '메모 목록 GET /notes', request: like({ route: 'GET /notes', path: '/notes' }), decision: 'deny' },
+      { name: '공지 쓰기 POST /notices', request: like({ service: 'notices', method: 'POST', route: 'POST /notices', path: '/notices' }),
+        decision: 'deny', reasonCode: 'instructor_role_contract_missing' },
+      { name: '메모 읽기 GET /notes/:id(정책 버전 2여도 그대로)', request: like({ path: `/notes/${NOTE}`, policyRevision: 2 }),
+        decision: 'allow', ruleIdsExact: ['device_registered', 'zone_note_read'] },
+      { name: '메모 수정 PUT /notes/:id', request: like({ method: 'PUT', route: 'PUT /notes/:id', path: `/notes/${NOTE}` }),
+        decision: 'allow', ruleIdsExact: ['device_registered', 'zone_note_update'] },
+    );
+  }
   const results = [];
   for (const item of checks) {
     const response = await decide(item.request);
     const valid = validResponse(item.request, response, ruleIds)
       && response.decision === item.decision
-      && (!item.reasonCode || response.reasonCode === item.reasonCode);
+      && (!item.reasonCode || response.reasonCode === item.reasonCode)
+      && (!item.ruleIdsExact || response.ruleIds.join(',') === item.ruleIdsExact.join(','));
     results.push({ name: item.name, passed: valid });
   }
   return results;

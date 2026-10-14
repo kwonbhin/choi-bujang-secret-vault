@@ -346,7 +346,7 @@ export async function runAttackChecks(config) {
       }
       if (config.step >= 10) {
         // 10단계(학생 설계, 계약에 없음): 배포된 복구 경로에 실제로 보낸 요청과 로컬 정책 사본 검증 결과만 기록합니다.
-        const restorePath = `/api/restores/${crypto.randomUUID()}`;
+        const restorePath = `/api/notes/${crypto.randomUUID()}/restore`;
         const anonymousRestore = await get(app, restorePath, { method: 'POST' });
         const forgedRestore = await get(app, restorePath, {
           method: 'POST', headers: { Authorization: `Bearer ${forgedToken(config)}` },
@@ -365,7 +365,7 @@ export async function runAttackChecks(config) {
           policy = `사본 검증 실패(복원을 중단합니다): ${String(error?.message).slice(0, 80)}`;
         }
         checks.push(
-          { attackId: 'restore_without_login', expected: '로그인 없이, 또는 서명 없는 가짜 토큰으로 POST /api/restores/:id는 401 JSON으로 거부됨',
+          { attackId: 'restore_without_login', expected: '로그인 없이, 또는 서명 없는 가짜 토큰으로 POST /api/notes/:id/restore는 401 JSON으로 거부됨',
             observed: `로그인 없이 ${await describe(anonymousRestore)} / 가짜 토큰 ${await describe(forgedRestore)}` },
           { attackId: 'restore_policy_snapshot', expected: '안전 정책 사본의 sha256·revision이 manifest와 맞고, 가상 시험 정책과 바뀔 항목이 0개, 운영 판정기는 바뀌지 않음',
             observed: `로컬 npm run policy:diff와 같은 검사: ${policy}` },

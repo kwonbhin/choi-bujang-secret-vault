@@ -4,6 +4,7 @@
 export const RULE_IDS = Object.freeze([
   'starter.deny', 'device_registered', 'step_up_required',
   'zone_note_read', 'zone_note_update', 'zone_notice_update',
+  'zone_note_restore', 'restore_verified_policy',
 ]);
 
 // 8단계 구역: 계약의 정확한 route 표기만 받습니다. allowedRoutes(`/api/...`)와는 표기가 다릅니다.
@@ -15,12 +16,14 @@ export const RESOURCE_KINDS = Object.freeze({
   note: Object.freeze({ service: 'notes', prefix: '/notes' }),
   notice: Object.freeze({ service: 'notices', prefix: '/notices' }),
 });
-// 메모는 한 건 읽기·수정만 허용합니다. 메모 전체 목록(GET /notes)은 표에 없어 거부됩니다.
+// 메모는 한 건 읽기·수정과 (10단계) 한 건 복구만 허용합니다. 메모 전체 목록(GET /notes)은 표에 없어 거부됩니다.
 // 공지 경로의 쓰기(POST·PUT·PATCH·DELETE)는 모두 zone_notice_update로 거부합니다.
 const NOTICE_WRITE = { kind: 'notice', ruleId: 'zone_notice_update', deny: 'instructor_role_contract_missing' };
+// 10단계 메모 복구(학생 설계): 정확히 /notes/<id>/restore 모양만 받고, 검증한 안전 정책 버전일 때만 허용합니다.
 const ZONES = Object.freeze({
   'GET /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_read' },
   'PUT /notes/:id': { kind: 'note', item: true, ruleId: 'zone_note_update' },
+  'POST /notes/:id/restore': { kind: 'note', item: true, suffix: '/restore', ruleId: 'zone_note_restore', verifiedPolicy: true },
   ...Object.fromEntries(['POST', 'PUT', 'PATCH', 'DELETE'].flatMap(method => [
     [`${method} /notices`, { ...NOTICE_WRITE, item: false }],
     [`${method} /notices/:id`, { ...NOTICE_WRITE, item: true }],
@@ -43,7 +46,9 @@ export function resourceOf(request) {
   if (typeof request.path !== 'string') return null;
   if (!zone.item) return request.path === kind.prefix ? { ...zone, id: null, resourceId: `${zone.kind}:*` } : null;
   if (!request.path.startsWith(`${kind.prefix}/`)) return null;
-  const id = request.path.slice(kind.prefix.length + 1);
+  const suffix = zone.suffix ?? '';
+  if (suffix && !request.path.endsWith(suffix)) return null;
+  const id = request.path.slice(kind.prefix.length + 1, request.path.length - suffix.length);
   if (!RESOURCE_ID.test(id) || FUNCTION_SEGMENTS.has(id.toLowerCase())) return null;
   return { ...zone, id, resourceId: `${zone.kind}:${id}` };
 }
@@ -56,6 +61,9 @@ const UNUSUAL_HOURS = { from: 0, to: 5 };
 const BURST_WINDOW_SECONDS = 600; // 최근 10분 안의 사건만 셉니다.
 const BURST_COUNT = 10; // 그 안에 이만큼 넘게 몰리면 갑자기 많은 읽기로 봅니다.
 const STEP_UP_MAX_AGE_SECONDS = 300; // 추가 인증 뒤 5분 안의 요청만 다시 확인된 것으로 봅니다.
+// 복구 경로에 적용할 검증한 안전 정책 버전: 계약의 policyRevision. 연습 정상 요청(scripts/fixture-7.mjs)의 값 1과 같습니다.
+// DB 쪽 안전 정책 사본 's9-safe-1'(supabase/step10_policy_backup.sql)이 이 버전에 대응합니다.
+const VERIFIED_POLICY_REVISION = 1;
 
 const respond = (request, decision, reasonCode, ruleIds) => ({
   schema: 'aleph.decision.v1',
@@ -129,6 +137,14 @@ export async function decide(request) {
     && burst !== null && burst > BURST_COUNT;
   if ((!signals.trusted || burst === null || unusualAccess) && !freshStepUp(request.stepUp)) {
     return respond(request, 'step_up', 'step_up_required', 'step_up_required');
+  }
+  // restore_verified_policy: 복구 경로는 계약의 policyRevision이 검증한 안전 정책 버전과 정확히 같을 때만 허용합니다.
+  // 값이 없거나 다르면 복구하지 않습니다. 다른 경로는 이 규칙을 보지 않습니다.
+  if (resource.verifiedPolicy) {
+    if (request.policyRevision !== VERIFIED_POLICY_REVISION) {
+      return respond(request, 'deny', 'policy_unverified', 'restore_verified_policy');
+    }
+    return respond(request, 'allow', 'approved', ['device_registered', resource.ruleId, 'restore_verified_policy']);
   }
   // 메모 읽기·수정 구역의 경로상 허용입니다. 그 메모가 요청한 사람의 것인지는 API가 owner_id로 다시 검사합니다.
   return respond(request, 'allow', 'approved', ['device_registered', resource.ruleId]);

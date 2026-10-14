@@ -1,6 +1,6 @@
 // 10단계 실제 배포 복구 확인입니다. 학생 설계(계약에 없음). 학생이 자기 터미널에서 직접 실행합니다.
 //   npm run restore:live-check
-// B 계정으로 로그인해 B 메모 한 건을 앱 API로 변조·삭제하고 POST /api/restores/:id로 되살린 뒤,
+// B 계정으로 로그인해 B 메모 한 건을 앱 API로 변조·삭제하고 POST /api/notes/:id/restore로 되살린 뒤,
 // 내용 해시가 처음과 같은지 확인합니다. A 메모는 건드리지 않습니다(B 로그인으로 보이는 B 메모 한 건만 씀).
 // 복원마다 먼저 {"dryRun": true}로 미리보기(버전·바뀔 항목)를 받고, 아무것도 안 바뀌었는지 본 뒤 복원합니다.
 // - 이메일·비밀번호는 실행할 때 물어보고 메모리에만 둡니다. 비밀번호는 화면에 보이지 않습니다.
@@ -141,7 +141,7 @@ async function main() {
     if (!record(`메모 ${short(id)} 처음 읽기`, first.status === 200, `HTTP ${first.status}`, { status: first.status })) return;
     original = { title: first.data.title, body: first.data.body };
     const startHash = noteSha256(original.title, original.body);
-    const preview = () => call('POST', `/api/restores/${id}`, { token, body: { dryRun: true } });
+    const preview = () => call('POST', `/api/notes/${id}/restore`, { token, body: { dryRun: true } });
 
     // 미리보기로 사본이 지금 내용과 같은지 먼저 봅니다(아무것도 쓰지 않음).
     // 다르면 아래 시험이 B의 정상 수정을 되돌리게 되므로 멈춥니다.
@@ -159,7 +159,7 @@ async function main() {
     record('미리보기: 변조 뒤(버전·바뀔 항목만, 쓰지 않음)', previewOk(preview1, startHash, afterTamper.hash, ['content']) && stillTampered,
       `${previewDetail(preview1)}, 미리보기 뒤에도 변조 그대로 ${stillTampered}`, preview1);
 
-    const restored1 = await call('POST', `/api/restores/${id}`, { token });
+    const restored1 = await call('POST', `/api/notes/${id}/restore`, { token });
     const check1 = await currentHash(token, id);
     const same1 = check1.hash === startHash;
     record('변조 뒤 복구', restored1.status === 200 && restored1.data?.matched === true && same1
@@ -181,7 +181,7 @@ async function main() {
     record('미리보기: 삭제 뒤(버전·바뀔 항목만, 쓰지 않음)', previewOk(preview2, startHash, null, ['row_restored']) && stillGone,
       `${previewDetail(preview2)}, 미리보기 뒤에도 삭제 그대로 ${stillGone}`, preview2);
 
-    const restored2 = await call('POST', `/api/restores/${id}`, { token });
+    const restored2 = await call('POST', `/api/notes/${id}/restore`, { token });
     const check2 = await currentHash(token, id);
     const same2 = check2.hash === startHash;
     record('삭제 뒤 복구', restored2.status === 200 && restored2.data?.matched === true && same2
@@ -192,9 +192,9 @@ async function main() {
       restored2);
     if (same2) state = 'clean';
 
-    const anonymous = await call('POST', `/api/restores/${id}`);
+    const anonymous = await call('POST', `/api/notes/${id}/restore`);
     record('로그인 없이 복구', anonymous.status === 401, `HTTP ${anonymous.status} (기대 401)`, { status: anonymous.status });
-    const missing = await call('POST', `/api/restores/${randomUUID()}`, { token });
+    const missing = await call('POST', `/api/notes/${randomUUID()}/restore`, { token });
     record('없는 id 복구', missing.status === 404, `HTTP ${missing.status} (기대 404)`, missing);
   } finally {
     // 시험 중 멈췄다면 한 번 더 복구를 부르고, 그래도 안 되면 메모리의 처음 내용으로 되돌립니다.
@@ -209,7 +209,7 @@ async function main() {
 
 async function putBack(token, original) {
   if (!chosenId) return;
-  const again = await call('POST', `/api/restores/${chosenId}`, { token });
+  const again = await call('POST', `/api/notes/${chosenId}/restore`, { token });
   if (again.status === 200 && again.data?.matched === true
       && (await currentHash(token, chosenId)).hash === noteSha256(original.title, original.body)) {
     console.log(`되돌림: 복구 HTTP ${again.status}`);

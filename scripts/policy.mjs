@@ -24,8 +24,8 @@ const SCHEMAS = {
   safe: 'aleph.student.safe-policy.v1',
   manifest: 'aleph.student.safe-policy-manifest.v1',
 };
-// 운영 판정기 미변경 확인의 기준: 9단계 판정을 받은 커밋입니다. 이 파일은 판정기를 읽기만 합니다.
-const DECIDER_BASELINE_COMMIT = '23fce0dd347ff7fa017402d2845bae46f543f300';
+// 운영 판정기 미변경 확인의 기준: 지금 커밋(HEAD)에 저장된 src/decider.mjs입니다. 이 파일은 판정기를 읽기만 합니다.
+// (10단계에서 판정기에 복구 경로를 더해 9단계 커밋 23fce0d와는 달라졌으므로, 작업 폴더에서 바뀌지 않았는지만 봅니다.)
 
 export class PolicyAbort extends Error {}
 const abort = message => { throw new PolicyAbort(message); };
@@ -96,14 +96,17 @@ export function notesDecision(policy, { actor, owner, method = 'GET', list = fal
 const bReadsA = policy => notesDecision(policy, { actor: 'B', owner: 'A' });
 const label = decision => (decision === 'allow' ? '허용' : '거부');
 
-// 운영 판정기 src/decider.mjs가 9단계 판정 커밋과 같은지 봅니다(읽기만 함).
+// 운영 판정기 src/decider.mjs가 지금 커밋에 저장된 내용과 같은지 봅니다(읽기만 함).
 export function operationalDeciderCheck() {
   const nowSha = lfSha256(readFileSync(join(root, 'src', 'decider.mjs'), 'utf8'));
   let baseSha = null;
+  let baseline = 'HEAD';
   try {
-    baseSha = lfSha256(execFileSync('git', ['-C', root, 'show', `${DECIDER_BASELINE_COMMIT}:src/decider.mjs`], { encoding: 'utf8', windowsHide: true }));
+    const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true });
+    baseline = git('rev-parse', '--short=7', 'HEAD').trim();
+    baseSha = lfSha256(git('show', 'HEAD:src/decider.mjs'));
   } catch { /* 기준 커밋을 못 읽으면 같다고 하지 않습니다. */ }
-  return { same: baseSha !== null && nowSha === baseSha, sha256: nowSha, baseline: DECIDER_BASELINE_COMMIT.slice(0, 7) };
+  return { same: baseSha !== null && nowSha === baseSha, sha256: nowSha, baseline };
 }
 
 export function diffReport(dir = POLICY_DIR) {

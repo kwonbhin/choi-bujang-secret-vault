@@ -1,4 +1,4 @@
-// 10단계 복구 경로 POST /api/restores/:id 의 로컬 시험입니다. 학생 설계(계약에 없음).
+// 10단계 복구 경로 POST /api/notes/:id/restore 의 로컬 시험입니다. 학생 설계(계약에 없음).
 // 가짜 로그인 검사기와 .eq() 조건을 실제로 거르는 가짜 저장소를 씁니다. 배포된 API나 심판 판정이 아닙니다.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -341,9 +341,10 @@ test('dryRun: 문자열 본문도 읽고, 사본 검증 실패면 409로 멈춤,
   assert.deepEqual(blocked.json, { error: 'AUDIT_UNAVAILABLE', restored: false });
 });
 
-test('미리보기 조건: 본문 dryRun true·"true", 문자열 본문, 쿼리 ?dryRun=true → 쓰지 않고 plan만', async () => {
+test('미리보기 조건: 본문 dryRun·preview true·"true", 문자열 본문, 쿼리 ?dryRun=true → 쓰지 않고 plan만', async () => {
   for (const options of [
     { body: { dryRun: true } }, { body: { dryRun: 'true' } }, { body: '{"dryRun":"true"}' },
+    { body: { preview: true } }, { body: { preview: 'true' } }, { body: '{"preview":true}' }, { body: { dryRun: false, preview: true } },
     { query: { dryRun: 'true' } }, { query: { dryRun: ['true'] } }, { query: { dryRun: 'true' }, body: { dryRun: false } },
   ]) {
     const tables = seed();
@@ -362,6 +363,7 @@ test('그 밖의 본문은 400으로 막지 않고 모두 복원: 없음, {}, �
   for (const options of [
     {}, { body: {} }, { body: '' }, { body: null }, { body: { other: 1 } }, { body: { dryRun: false } },
     { body: { dryRun: 'false' } }, { body: { dryRun: 'TRUE' } }, { body: { dryRun: 1 } }, { body: 'not json' },
+    { body: { preview: false } }, { body: { preview: 'yes' } },
     { body: '{"dryRun":' }, { body: [1] }, { body: 7 }, { bodyThrows: true },
     { query: { dryRun: 'false' } }, { query: { dryRun: '1' } },
   ]) {

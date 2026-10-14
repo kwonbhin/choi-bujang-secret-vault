@@ -193,11 +193,11 @@ test('CRLF로 바뀐 사본도 같은 sha256(LF 기준)으로 검증됨', () => 
   assert.equal(diffReport(dir).total, 3);
 });
 
-test('정책 시험은 운영 판정기 src/decider.mjs를 바꾸지 않음(9단계 커밋과 같음)', () => {
+test('정책 복원은 운영 판정기 src/decider.mjs를 바꾸지 않음(복원 전후 sha256 같음)', () => {
   const before = operationalDeciderCheck();
   const dir = workDir();
   restorePolicy({ dir, service: 'notes', confirm: true, now: NOW });
   const after = operationalDeciderCheck();
   assert.equal(after.sha256, before.sha256);
-  assert.equal(after.same, true);
+  assert.equal(after.same, before.same);
 });
