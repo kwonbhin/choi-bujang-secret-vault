@@ -1,0 +1,90 @@
+{
+  "moduleKey": "exfiltration",
+  "source": "MITRE ATT&CK T1041 Exfiltration Over C2 Channel (https://attack.mitre.org/techniques/T1041/), T1048 Exfiltration Over Alternative Protocol (https://attack.mitre.org/techniques/T1048/), T1560 Archive Collected Data (https://attack.mitre.org/techniques/T1560/)",
+  "note": "경보 원문에 실제로 나오는 모양(rule.mitre 의 T1041·T1048, data.dstip·bytes·files·count, 설명의 '처음 보는 목적지·외부 주소·평소와 다른 주소·평소에 쓰지 않던 포트·압축 파일·명령 통로·평소 목적지·수업 자료 주소·자료실·백업처럼 보이는' 표기)을 보고 정했습니다. 경보 묶음에는 도메인·파일 종류·압축 여부·평소 목적지 여부를 담는 칸이 없어 설명 문장과 숫자 칸으로 봅니다. 압축 후 반출은 T1048·T1041 에 더해 T1560 을 근거로 적었습니다. 기준값은 아래 thresholds·businessHours 에 적었고, 점수는 decide.mjs 에서 정합니다.",
+  "thresholds": {
+    "largeBytes": 50000000,
+    "mediumBytes": 5000000,
+    "manyFiles": 50,
+    "manyRepeats": 5,
+    "evidence": "원문에서 공격으로 적힌 전송(ex-01~10, '대용량·자료실 전체·큰 파일' 표기)은 70,000,000~320,000,000 바이트이고, 애매한 전송(ex-11~20, '중간 크기·작은 파일·큰 파일은 아닙니다')은 0~15,000,000 바이트입니다. 그 사이인 50,000,000 바이트(50MB) 이상을 대용량, 5,000,000 바이트 이상을 중간 크기로 봅니다. 파일 수는 공격 60~400건, 애매 1~12건이라 50건 이상을 많음으로, 반복은 공격 8~15번, 애매 3번이라 5번 이상을 반복으로 봅니다."
+  },
+  "businessHours": {
+    "start": "09:00",
+    "end": "17:00",
+    "timezone": "경보 timestamp 에 적힌 +09:00 그대로",
+    "evidence": "원문의 정상 이벤트(ex-21~30)와 '수업 시간에' 경보(ex-13 10:17)가 모두 09:03~16:08 에 있어 09:00 이상 17:00 미만을 수업(업무) 시간으로 봅니다. 다만 '수업 시간 밖'(ex-02 09:16)·'업무 시간 밖'(ex-06 12:02)이라고 적힌 경보의 timestamp 도 이 안에 있어 시각 칸과 설명이 어긋나므로, 시간 밖 신호는 설명 표기 또는 시각 둘 중 하나만 맞아도 셉니다."
+  },
+  "patterns": [
+    {
+      "name": "large-transfer-new-destination",
+      "technique": "T1048 Exfiltration Over Alternative Protocol, T1041 Exfiltration Over C2 Channel",
+      "match": {
+        "destination": "설명에 '처음 보는 목적지·처음 보는 주소·목적지는 처음·평소와 다른 주소·외부 주소·다른 주소' 표기",
+        "volume": "data.bytes 가 largeBytes 이상이거나 data.files 가 manyFiles 이상"
+      },
+      "evidence": "T1048·T1041: 공격자는 모은 자료를 평소 쓰지 않는 바깥 목적지로 내보내며, MITRE 탐지 안내는 평소와 다른 목적지로 가는 많은 양(high volume)의 전송을 유출 흔적으로 봅니다."
+    },
+    {
+      "name": "archive-exfiltration",
+      "technique": "T1560 Archive Collected Data + T1048 Exfiltration Over Alternative Protocol",
+      "match": {
+        "archive": "설명에 '압축 파일' 표기가 있고 실제로 나감('나갔·올라갔·전송·복사', '전송은 아직 없습니다' 제외)",
+        "signals": "처음 보는 목적지, 대용량, 시간 밖"
+      },
+      "evidence": "T1560: 공격자는 빼낼 자료를 반출 전에 압축·암호화해 크기를 줄이고 내용을 숨기므로(Both compression and encryption are done prior to exfiltration), 압축 파일이 바깥으로 나가는 것이 유출 흔적입니다."
+    },
+    {
+      "name": "repeated-bulk-transfer",
+      "technique": "T1041 Exfiltration Over C2 Channel, T1048 Exfiltration Over Alternative Protocol",
+      "match": {
+        "repeat": "data.count 가 manyRepeats 이상이거나 설명에 '반복·연속' 표기",
+        "with": "대용량 또는 처음 보는 목적지·명령 통로"
+      },
+      "evidence": "T1041·T1048: 많은 자료를 한 번에 보내지 않고 같은 목적지로 여러 번 나눠 보내도 합친 양이 크면 유출이며, 명령 통로(C2)로 반복해서 큰 자료가 나가는 것이 T1041 의 형태입니다."
+    },
+    {
+      "name": "alternative-port-transfer",
+      "technique": "T1048 Exfiltration Over Alternative Protocol",
+      "match": {
+        "port": "설명에 '평소에 쓰지 않던 포트·다른 프로토콜' 표기"
+      },
+      "evidence": "T1048: 공격자는 평소 통신과 다른 프로토콜·포트로 자료를 내보내 감시를 피하므로, 평소 쓰지 않던 포트로 자료가 나가는 것이 그 흔적입니다."
+    },
+    {
+      "name": "off-hours-transfer",
+      "technique": "T1048 Exfiltration Over Alternative Protocol (탐지 안내: off-hours activity)",
+      "match": {
+        "time": "설명의 '수업 시간 밖·업무 시간 밖' 표기, 또는 timestamp 가 businessHours 밖",
+        "with": "실제 바깥 전송"
+      },
+      "evidence": "T1048 탐지 안내는 업무 시간 밖(off-hours)의 바깥 전송을 유출 신호로 보므로, 다른 신호와 겹치면 확신도를 올립니다."
+    },
+    {
+      "name": "archive-staging",
+      "technique": "T1560 Archive Collected Data",
+      "match": {
+        "archive": "압축 파일을 만들었거나 열었지만 바깥 전송은 아직 없거나 일부뿐"
+      },
+      "evidence": "T1560 압축은 반출 전 준비 단계라 전송이 없으면 유출로 확정할 수 없으므로 사람이 확인합니다."
+    },
+    {
+      "name": "single-transfer-signal",
+      "technique": "T1041 Exfiltration Over C2 Channel, T1048 Exfiltration Over Alternative Protocol",
+      "match": {
+        "mitre": "rule.mitre 에 T1041·T1048 이 있지만 신호가 하나뿐이거나 애매함(처음 보는 주소로 작은 파일, 전송량이 한 번 높음, 실패한 전송, 명령 통로의 짧은 이름, 백업처럼 보이지만 평소 목적지·승인 표시가 없음)"
+      },
+      "evidence": "T1041·T1048 의 전송 기록은 정상 업로드·동기화와 모양이 같으므로, 신호가 하나뿐이면 확정하지 않고 사람이 확인합니다."
+    },
+    {
+      "name": "known-destination-baseline",
+      "technique": "T1048 탐지 안내(평소 사용자 행동과 대조)",
+      "match": {
+        "usual": "설명에 '평소 목적지·수업 자료 주소·자료실'이 있고 크기가 mediumBytes 미만이며 다른 신호가 없음",
+        "approved": "설명에 '승인된' 표기가 있고 처음 보는 목적지가 아님",
+        "noTransfer": "T1041·T1048 표시가 없고 바깥 전송 신호도 없음(읽기·저장·로그아웃 등)"
+      },
+      "evidence": "T1048 탐지 안내는 평소 사용자 행동에서 벗어난 전송을 보라고 하므로, 평소 목적지로 가는 작은 동기화·승인된 백업·일반 읽기는 기록만 합니다. 이름이 '백업'이라는 것만으로는 정상으로 보지 않습니다."
+    }
+  ]
+}

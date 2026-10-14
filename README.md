@@ -365,6 +365,28 @@
   - 다른 모듈의 규칙과 파일 머리는 그대로 둡니다. 판정기에는 연결하지 않았습니다(현재 요청 계약은 가명 계정만 주고, 엔진의 세션 회수와 연결돼 있지 않음).
 - `node xdr/privilege/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 그룹·횟수·호스트 칸은 꺼내지 않습니다.
 
+## 보너스: 자료 빼돌리기 경보 (`xdr/exfiltration`)
+
+- `decide.mjs`가 경보 하나를 판단합니다(`npm run xdr:run -- exfiltration`). import·파일·네트워크 없이 혼자 계산합니다.
+- 근거 패턴은 `patterns.json`(T1041 명령 통로 유출, T1048 다른 프로토콜 유출, T1560 압축 후 반출)입니다: large-transfer-new-destination, archive-exfiltration, repeated-bulk-transfer, alternative-port-transfer, off-hours-transfer, archive-staging, single-transfer-signal, known-destination-baseline.
+- 경보 묶음에는 도메인·파일 종류·압축 여부·평소 목적지 여부를 담는 칸이 없습니다. 그래서 `rule.mitre`, `data.bytes`·`files`·`count`, `timestamp`, 설명 문장("처음 보는 목적지·평소 목적지·압축 파일·평소에 쓰지 않던 포트")을 봅니다. 목적지 주소 값 자체는 판단에 쓰지 않습니다.
+- 기준(`patterns.json`의 `thresholds`·`businessHours`)
+  - 대용량은 50,000,000바이트 이상, 중간 크기는 5,000,000바이트 이상입니다. 파일 많음은 50건 이상, 반복은 5번 이상입니다.
+  - 근거: 원문의 공격 전송은 70~320MB·60~400건·8~15번이고, 애매한 전송은 0~15MB·1~12건·3번입니다.
+  - 업무 시간은 09:00 이상 17:00 미만입니다. 정상 이벤트가 09:03~16:08에 있기 때문입니다.
+  - "수업 시간 밖"(ex-02, 09:16)·"업무 시간 밖"(ex-06, 12:02)은 timestamp가 이 안에 있습니다. 그래서 시간 밖 신호는 설명 표기나 시각 중 하나만 맞아도 셉니다.
+- 점수
+  - 바깥 전송(0.4)에 처음 보는 목적지 0.2, 대용량 0.25, 파일 많음 0.15, 반복 0.2, 압축 파일 0.15, 시간 밖 0.1, 평소 쓰지 않던 포트 0.15를 더합니다. 0.85 이상이면 block입니다.
+  - T1041·T1048 전송인데 정상 기준에 맞지 않으면 최소 alert(0.5)입니다. 압축만 하고 전송이 없으면 alert(0.5)입니다.
+  - 평소 목적지로 가는 작은 전송(5MB 미만, 다른 신호 없음), 처음 보는 목적지가 아닌 "승인된" 전송, 읽기·저장·로그아웃은 record입니다.
+  - "백업처럼 보이는 전송"(ex-16)은 이름만 보고 넘기지 않습니다. 평소 목적지 표기와 승인 표시가 없어 alert입니다.
+- 결과(로컬): block 10 · alert 10 · record 10. 정상 이벤트(ex-21~30)를 block한 경우는 없습니다.
+- `node xdr/exfiltration/respond.mjs`는 block 후보를 출발 주소나 계정이 아니라 목적지 차단 규칙 후보로 `xdr/deny-rules.json`에 쌓습니다. 도메인 칸이 있으면 도메인, 없으면 `data.dstip`입니다. 규칙에는 `xdr-ex-`, `xdr_exfiltration_block_destination`, `xdr_exfiltration`, `target.kind` `destination_ip`/`destination_domain`, 60분 만료, 근거 경보 번호가 붙습니다. block·alert 알림은 `xdr/alerts.log`에 쌓습니다.
+  - 같은 묶음에서 정상(record)으로 나온 목적지(192.0.2.10·198.51.100.10)는 막지 않습니다. 이번 block 목적지 8곳은 모두 정상 목적지와 겹치지 않아 규칙이 8건이고, 알림은 20줄입니다.
+  - 목적지 규칙이라 계정은 막지 않습니다. 정상 사용자는 정상 목적지로만 보내므로 그 사용에는 걸리지 않습니다.
+  - 다른 모듈의 규칙과 파일 머리는 그대로 둡니다. 판정기에는 연결하지 않았습니다(현재 요청 계약에 목적지 값이 없음).
+- `node xdr/exfiltration/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 목적지·크기·파일 수·호스트 칸은 꺼내지 않습니다.
+
 ## 다시 실행하는 방법
 
 1. Supabase 대시보드 > SQL Editor에서 아래 순서대로 실행합니다. 뒤 파일이 앞 파일의 권한을 바꾸므로, 다시 실행할 때도 이 순서 전체를 지킵니다(예: `notes-rls.sql`만 다시 실행하면 authenticated 직접 권한이 되살아납니다).

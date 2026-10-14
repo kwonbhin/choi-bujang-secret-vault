@@ -1,0 +1,191 @@
+{
+  "schema": "aleph.xdr.result.v1",
+  "moduleKey": "exfiltration",
+  "decisions": [
+    {
+      "alertId": "ex-01",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination: 처음 보는 목적지·대용량·파일 많음, 240000000바이트, 파일 200건, 수준 12"
+    },
+    {
+      "alertId": "ex-02",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination+archive-exfiltration+off-hours-transfer: 처음 보는 목적지·대용량·압축 파일·시간 밖, 180000000바이트, 파일 1건, 수준 12"
+    },
+    {
+      "alertId": "ex-03",
+      "action": "block",
+      "confidence": 0.85,
+      "reason": "repeated-bulk-transfer: 대용량·반복, 90000000바이트, 반복 8번, 수준 11"
+    },
+    {
+      "alertId": "ex-04",
+      "action": "block",
+      "confidence": 1,
+      "reason": "repeated-bulk-transfer+alternative-port-transfer: 대용량·파일 많음·반복·평소 쓰지 않던 포트, 120000000바이트, 파일 60건, 수준 12"
+    },
+    {
+      "alertId": "ex-05",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination: 처음 보는 목적지·대용량·파일 많음, 70000000바이트, 파일 140건, 수준 10"
+    },
+    {
+      "alertId": "ex-06",
+      "action": "block",
+      "confidence": 0.95,
+      "reason": "repeated-bulk-transfer+off-hours-transfer: 대용량·반복·시간 밖, 210000000바이트, 반복 15번, 수준 12"
+    },
+    {
+      "alertId": "ex-07",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination+archive-exfiltration+repeated-bulk-transfer: 처음 보는 목적지·대용량·반복·압축 파일, 150000000바이트, 파일 3건, 수준 11"
+    },
+    {
+      "alertId": "ex-08",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination: 처음 보는 목적지·대용량·파일 많음, 320000000바이트, 파일 400건, 수준 12"
+    },
+    {
+      "alertId": "ex-09",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination+repeated-bulk-transfer: 처음 보는 목적지·대용량·반복·명령 통로, 80000000바이트, 반복 9번, 수준 10"
+    },
+    {
+      "alertId": "ex-10",
+      "action": "block",
+      "confidence": 1,
+      "reason": "large-transfer-new-destination+archive-exfiltration: 처음 보는 목적지·대용량·압축 파일, 110000000바이트, 파일 2건, 수준 12"
+    },
+    {
+      "alertId": "ex-11",
+      "action": "alert",
+      "confidence": 0.65,
+      "reason": "single-transfer-signal: 처음 보는 목적지·중간 크기, 8000000바이트, 파일 1건, 수준 6"
+    },
+    {
+      "alertId": "ex-12",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-transfer-signal: 중간 크기·평소 목적지 표기, 12000000바이트, 파일 4건, 수준 7"
+    },
+    {
+      "alertId": "ex-13",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "archive-staging: 압축 파일을 만들었지만 바깥 전송은 없음, 2000000바이트, 파일 1건, 수준 5"
+    },
+    {
+      "alertId": "ex-14",
+      "action": "alert",
+      "confidence": 0.6,
+      "reason": "single-transfer-signal: 처음 보는 목적지, 400000바이트, 파일 2건, 수준 6"
+    },
+    {
+      "alertId": "ex-15",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-transfer-signal: 신호 하나, 3000000바이트, 파일 1건, 수준 8"
+    },
+    {
+      "alertId": "ex-16",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-transfer-signal: 중간 크기·백업처럼 보이지만 평소 목적지·승인 표시 없음, 15000000바이트, 파일 1건, 수준 6"
+    },
+    {
+      "alertId": "ex-17",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-transfer-signal: 중간 크기·평소 목적지 표기, 6000000바이트, 파일 12건, 수준 7"
+    },
+    {
+      "alertId": "ex-18",
+      "action": "alert",
+      "confidence": 0.6,
+      "reason": "single-transfer-signal: 처음 보는 목적지·전송 실패, 0바이트, 파일 1건, 수준 5"
+    },
+    {
+      "alertId": "ex-19",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "single-transfer-signal: 명령 통로, 90000바이트, 반복 3번, 수준 6"
+    },
+    {
+      "alertId": "ex-20",
+      "action": "alert",
+      "confidence": 0.8,
+      "reason": "archive-staging: 처음 보는 목적지·중간 크기·압축 파일(일부·미전송), 5000000바이트, 파일 2건, 수준 7"
+    },
+    {
+      "alertId": "ex-21",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 2400바이트, 파일 1건, 수준 3"
+    },
+    {
+      "alertId": "ex-22",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 1800바이트, 파일 1건, 수준 2"
+    },
+    {
+      "alertId": "ex-23",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 평소 목적지로 가는 작은 전송, 20000바이트, 파일 3건, 수준 3"
+    },
+    {
+      "alertId": "ex-24",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 6400바이트, 파일 1건, 수준 3"
+    },
+    {
+      "alertId": "ex-25",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 900바이트, 수준 2"
+    },
+    {
+      "alertId": "ex-26",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 3200바이트, 파일 1건, 수준 3"
+    },
+    {
+      "alertId": "ex-27",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 48000바이트, 파일 1건, 수준 3"
+    },
+    {
+      "alertId": "ex-28",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 400바이트, 수준 2"
+    },
+    {
+      "alertId": "ex-29",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 300바이트, 수준 3"
+    },
+    {
+      "alertId": "ex-30",
+      "action": "record",
+      "confidence": 0.1,
+      "reason": "known-destination-baseline: 바깥 전송 신호 없음, 2100바이트, 파일 1건, 수준 3"
+    }
+  ],
+  "counts": {
+    "block": 10,
+    "alert": 10,
+    "record": 10
+  }
+}
