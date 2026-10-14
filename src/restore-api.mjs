@@ -1,7 +1,7 @@
 // 10단계 복구 서버 함수 POST /api/restores/:id 입니다. 학생 설계(계약에 없음).
 // 판정기(src/decider.mjs)는 바꾸지 않았습니다. 복구 경로의 보안은 이 함수가 맡습니다.
 // - 로그인 필수: 사용자는 src/verify-login.mjs가 검사한 토큰의 userId로만 정합니다.
-//   URL·본문·쿼리의 owner_id는 읽지 않습니다. 본문에서는 dryRun(true/false)만 읽습니다.
+//   URL·본문·쿼리의 owner_id는 읽지 않습니다. 본문과 쿼리에서는 dryRun만 읽습니다.
 // - 사본(vault_notes_snapshot)의 owner_id가 로그인 사용자이고, 지금 메모 행이 있으면 그 owner_id도
 //   로그인 사용자여야 합니다. 아니면 남의 메모와 없는 메모를 같은 404로 답합니다.
 // - 복원 전에 사본 해시를 다시 계산해 대조하고, 다르면 복원하지 않고 409 BACKUP_VERIFICATION_FAILED로 멈춥니다.
@@ -11,7 +11,7 @@
 //   다른 메모, 사본, 감사 기록은 바꾸지 않습니다. 감사 기록은 insert만 하고 update·delete는 하지 않습니다.
 // - 감사 먼저: 복원 전에 감사 기록에 시작 줄(restore_started)을 쓰고, 쓰지 못하면 메모·사본을 읽지도 쓰지도 않고
 //   503 AUDIT_UNAVAILABLE(restored false)로 멈춥니다. 끝나면 결과 줄을 한 줄 더 씁니다. 응답에 audit: { startId, resultId }.
-// - 미리보기: 본문 {"dryRun": true}면 사본을 읽어 검증하고 plan(version, changes, beforeSha256, backupSha256)만 답합니다.
+// - 미리보기: 본문 dryRun이 true 또는 "true"이거나 쿼리 ?dryRun=true면 사본을 읽어 검증하고 plan(version, changes, beforeSha256, backupSha256)만 답합니다.
 //   메모는 쓰지 않고, 감사 기록에는 preview 줄 하나만 남깁니다. 응답에 audit: { previewId }.
 // - 복원 뒤 행을 다시 읽어 id·owner_id·해시가 사본과 같은지 확인합니다.
 // - 응답에는 id, restored, matched, sha256, backup(검증 표시·version·해시·다시 읽은 시각), before, after, changes(칸 이름)만 넣고
@@ -26,16 +26,16 @@ const NOTES = 'vault_notes';
 const SNAPSHOT = 'vault_notes_snapshot';
 const AUDIT = 'vault_restore_audit';
 
-// 본문 없음 → 복원(false), {"dryRun": true} → 미리보기, 그 밖의 모양 → null(400).
-function dryRunOf(body) {
+// 미리보기는 본문 dryRun이 true 또는 "true"이거나 쿼리 dryRun이 "true"일 때뿐입니다.
+// 그 밖의 경우(본문 없음, {}, 다른 칸, 깨진 JSON, false 등)는 모두 복원입니다. 본문 모양 때문에 400으로 막지 않습니다.
+const isTrue = value => value === true || value === 'true';
+function dryRunOf(body, query) {
+  if ([].concat(query?.dryRun ?? []).some(isTrue)) return true;
   let value = body;
-  if (value === undefined || value === null || value === '') return false;
   if (typeof value === 'string') {
-    try { value = JSON.parse(value); } catch { return null; }
+    try { value = JSON.parse(value); } catch { return false; }
   }
-  if (typeof value !== 'object' || Array.isArray(value)) return null;
-  if (value.dryRun === undefined) return false;
-  return typeof value.dryRun === 'boolean' ? value.dryRun : null;
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && isTrue(value.dryRun);
 }
 
 let cached;
@@ -88,8 +88,10 @@ export function createRestoreHandler(getDeps = loadDeps) {
     const rawId = request.query?.id;
     const id = typeof rawId === 'string' && UUID.test(rawId) ? rawId.toLowerCase() : null;
 
-    let dryRun;
-    try { dryRun = dryRunOf(request.body); } catch { dryRun = null; }
+    // 배포 환경에서 깨진 JSON 본문은 request.body를 읽을 때 오류가 나므로, 그때도 복원으로 봅니다.
+    let body;
+    try { body = request.body; } catch { body = undefined; }
+    const dryRun = dryRunOf(body, request.query);
 
     // 감사 기록은 insert만 합니다. 새 줄의 audit_id를 돌려받고, 쓰지 못하면 null입니다.
     const writeAudit = async (outcome, sha256 = null, matched = null) => {
@@ -104,11 +106,11 @@ export function createRestoreHandler(getDeps = loadDeps) {
     };
     const auditUnavailable = () => send(503, { error: 'AUDIT_UNAVAILABLE', restored: false });
 
-    // 시작 줄 전에 멈추는 요청(id·본문 형식 오류)은 한 줄만 남깁니다.
-    if (!id || dryRun === null) {
-      const auditId = await writeAudit(id ? 'invalid_body' : 'invalid_id');
+    // 시작 줄 전에 멈추는 요청(id 형식 오류)은 한 줄만 남깁니다.
+    if (!id) {
+      const auditId = await writeAudit('invalid_id');
       if (auditId === null) auditUnavailable();
-      else send(400, { error: id ? 'INVALID_BODY' : 'INVALID_ID', restored: false, audit: { startId: auditId, resultId: null } });
+      else send(400, { error: 'INVALID_ID', restored: false, audit: { startId: auditId, resultId: null } });
       return;
     }
 

@@ -70,7 +70,8 @@ function fakeSupabase(tables) {
   };
 }
 
-async function call(tables, { user = B, method = 'POST', id, body, query = {}, auth = true } = {}) {
+// bodyThrows: 배포 환경에서 깨진 JSON 본문을 읽을 때처럼 request.body 읽기가 오류를 냅니다.
+async function call(tables, { user = B, method = 'POST', id, body, query = {}, auth = true, bodyThrows = false } = {}) {
   const handler = createRestoreHandler(() => ({
     verifyLogin: async header => (header === 'Bearer good' ? { userId: user } : null),
     supabase: fakeSupabase(tables),
@@ -78,7 +79,9 @@ async function call(tables, { user = B, method = 'POST', id, body, query = {}, a
   let status;
   let json;
   const response = { setHeader() {}, status(code) { status = code; return { json(value) { json = value; } }; } };
-  await handler({ method, headers: auth ? { authorization: 'Bearer good' } : {}, query: { ...query, id }, body }, response);
+  const request = { method, headers: auth ? { authorization: 'Bearer good' } : {}, query: { ...query, id }, body };
+  if (bodyThrows) Object.defineProperty(request, 'body', { get() { throw new SyntaxError('Invalid JSON'); } });
+  await handler(request, response);
   return { status, json };
 }
 
@@ -338,20 +341,38 @@ test('dryRun: 문자열 본문도 읽고, 사본 검증 실패면 409로 멈춤,
   assert.deepEqual(blocked.json, { error: 'AUDIT_UNAVAILABLE', restored: false });
 });
 
-test('본문 모양이 틀리면 400 INVALID_BODY, 복원하지 않음. dryRun false·빈 객체는 복원', async () => {
-  for (const body of [{ dryRun: 'true' }, [1], 'not json', 7]) {
+test('미리보기 조건: 본문 dryRun true·"true", 문자열 본문, 쿼리 ?dryRun=true → 쓰지 않고 plan만', async () => {
+  for (const options of [
+    { body: { dryRun: true } }, { body: { dryRun: 'true' } }, { body: '{"dryRun":"true"}' },
+    { query: { dryRun: 'true' } }, { query: { dryRun: ['true'] } }, { query: { dryRun: 'true' }, body: { dryRun: false } },
+  ]) {
     const tables = seed();
     noteOf(tables, NOTE_B).content = '변조된 본문';
-    const { status, json } = await call(tables, { id: NOTE_B, body });
-    assert.equal(status, 400);
-    assert.equal(json.error, 'INVALID_BODY');
+    const { status, json } = await call(tables, { id: NOTE_B, ...options });
+    assert.equal(status, 200, JSON.stringify(options));
+    assert.equal(json.dryRun, true);
+    assert.equal(json.restored, false);
+    assert.deepEqual(json.plan.changes, ['content']);
     assert.equal(noteOf(tables, NOTE_B).content, '변조된 본문');
+    assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome), ['preview']);
   }
-  for (const body of [{ dryRun: false }, {}, '']) {
+});
+
+test('그 밖의 본문은 400으로 막지 않고 모두 복원: 없음, {}, 다른 칸, 깨진 JSON, false, 배열, 숫자', async () => {
+  for (const options of [
+    {}, { body: {} }, { body: '' }, { body: null }, { body: { other: 1 } }, { body: { dryRun: false } },
+    { body: { dryRun: 'false' } }, { body: { dryRun: 'TRUE' } }, { body: { dryRun: 1 } }, { body: 'not json' },
+    { body: '{"dryRun":' }, { body: [1] }, { body: 7 }, { bodyThrows: true },
+    { query: { dryRun: 'false' } }, { query: { dryRun: '1' } },
+  ]) {
     const tables = seed();
     noteOf(tables, NOTE_B).content = '변조된 본문';
-    assert.equal((await call(tables, { id: NOTE_B, body })).status, 200);
+    const { status, json } = await call(tables, { id: NOTE_B, ...options });
+    assert.equal(status, 200, JSON.stringify(options));
+    assert.equal(json.restored, true);
+    assert.equal(json.dryRun, undefined);
     assert.equal(noteOf(tables, NOTE_B).content, '가상 본문 B');
+    assert.deepEqual(tables.vault_restore_audit.map(row => row.outcome), ['restore_started', 'restored_modified']);
   }
 });
 

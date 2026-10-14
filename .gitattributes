@@ -1,0 +1,8 @@
+# 10단계 정책 사본: sha256을 내용 기준으로 비교하므로 어떤 PC에서도 줄바꿈을 바꾸지 않습니다.
+policy/** -text
+# 정책 원본 파일 5개: 사본과 같은 해시가 나오도록 작업 폴더에서도 LF로 고정합니다.
+src/decider.mjs text eol=lf
+supabase/notes.sql text eol=lf
+supabase/notes-write-grants.sql text eol=lf
+supabase/notes-rls.sql text eol=lf
+supabase/notes-revoke-direct.sql text eol=lf

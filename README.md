@@ -110,9 +110,9 @@
 - **서비스·경로**: 메모 서비스(`notes`)의 복구 경로 `POST /api/restores/:id` 하나를 더했습니다(`api/restores/[id].js`, `src/restore-api.mjs`). `aleph.config.json`의 `restoreRoute`는 `"POST /api/restores/:id"`이고 `allowedRoutes`에도 넣었습니다. 빌드는 `restoreRoute`가 경로 형식이 아니거나 `allowedRoutes`에 없으면 멈추고, 맞으면 `/aleph.json`에 옮겨 적습니다. 메모 API `/api/notes`, `/api/notes/:id`의 동작은 그대로입니다.
 - **판정기는 바꾸지 않았습니다.** `src/decider.mjs`의 구역 규칙에는 복구 경로가 없어 엔진을 거치면 `starter.deny`로 거부됩니다. 복구 경로의 보안은 서버 함수가 맡습니다.
 - **복구 서버 함수**:
-  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다. 본문에서는 `dryRun`(true/false)만 읽고, 다른 모양(예: `{"dryRun":"true"}`, 배열)이면 400 `INVALID_BODY`로 복원하지 않습니다.
+  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다. 본문과 쿼리에서는 `dryRun`만 읽습니다. 본문 모양 때문에 400으로 막지 않습니다.
   - **감사 기록 먼저**: 복원 전에 감사 기록에 시작 줄(`restore_started`)을 씁니다. 쓰지 못하면 메모·사본을 읽지도 쓰지도 않고 503 `{ error: "AUDIT_UNAVAILABLE", restored: false }`로 멈춥니다. 끝나면(성공·멈춤 모두) 결과 줄을 한 줄 더 쓰고, 응답에 `audit: { startId, resultId }`를 넣습니다. 결과 줄을 쓰지 못하면 500 `{ error: "AUDIT_FAILED", restored, audit: { startId, resultId: null } }`입니다. 감사 기록은 insert만 하고 update·delete는 하지 않습니다.
-  - **실행 전 미리보기**: 본문 `{"dryRun": true}`로 부르면 사본을 두 번 읽어 검증한 뒤 `plan: { version, changes, beforeSha256, backupSha256 }`과 `backup`만 답하고(`dryRun: true`, `restored: false`) 메모는 쓰지 않습니다. 감사 기록에는 `preview` 줄 하나만 남기고 응답에 `audit: { previewId }`를 넣습니다. 사본이 없거나 검증이 실패하면 미리보기도 같은 409로 멈춥니다. 본문이 없으면 지금처럼 복원합니다.
+  - **실행 전 미리보기**: 본문 `dryRun`이 `true` 또는 `"true"`이거나 쿼리 `?dryRun=true`로 부르면 사본을 두 번 읽어 검증한 뒤 `plan: { version, changes, beforeSha256, backupSha256 }`과 `backup`만 답하고(`dryRun: true`, `restored: false`) 메모는 쓰지 않습니다. 감사 기록에는 `preview` 줄 하나만 남기고 응답에 `audit: { previewId }`를 넣습니다. 사본이 없거나 검증이 실패하면 미리보기도 같은 409로 멈춥니다. 그 밖의 경우(본문 없음, `{}`, 다른 칸, 깨진 JSON, `false`, `"false"` 등)는 모두 지금처럼 복원합니다.
   - 사본의 `owner_id`가 로그인 사용자이고, 지금 행이 있으면 그 `owner_id`도 로그인 사용자여야 합니다. 아니면 남의 메모든 없는 메모든 같은 404 `NOTE_NOT_FOUND`입니다.
   - **멈추는 경우** (복원하지 않고, 로그인한 요청이므로 감사 기록은 남김):
     - 자기 메모가 지금 있는데 사본이 없으면 409 `{ error: "BACKUP_MISSING", restored: false }`
@@ -139,13 +139,14 @@
 - **내용 해시**: `SHA-256( UTF-8(title) + 0x00 바이트 + UTF-8(content) )`의 소문자 16진수 64자입니다. Postgres는 `public.vault_note_sha256(title, content)`, JS는 `src/content-hash.mjs`의 `noteSha256(title, content)`로 같은 값을 냅니다. Postgres의 text에는 0x00이 없어서 제목·본문 경계가 섞이지 않습니다. 유니코드 정규화는 하지 않습니다. 한글 예시로 두 쪽 결과가 같은지 확인했습니다(PostgreSQL 16 PGlite, 로컬).
 - **사본과 감사 기록** (`supabase/restore.sql`):
   - `vault_notes_snapshot`: `vault_notes`의 칸(`id`, `owner_id`, `title`, `content`, `created_at`)에 `content_sha256`, `snapshot_at`을 더했습니다. `id`는 primary key(unique)입니다.
-  - `vault_restore_audit`: `actor_id`(로그인 사용자 ID), `note_id`, `outcome`, `content_sha256`, `matched`, `at`만 둡니다. 메모 내용과 토큰은 넣지 않습니다. 로그인한 복구 요청은 시작 줄과 결과 줄 두 줄, 미리보기는 `preview` 한 줄, id·본문 형식 오류는 한 줄을 남깁니다. 로그인하지 않은 요청(401)은 남기지 않습니다(누구나 기록을 채우지 못하게). 새 칸이나 권한은 더하지 않았습니다(서버 함수는 insert 뒤 `audit_id`만 돌려받으며, 기존 `select`·`insert` 권한 안입니다).
+  - `vault_restore_audit`: `actor_id`(로그인 사용자 ID), `note_id`, `outcome`, `content_sha256`, `matched`, `at`만 둡니다. 메모 내용과 토큰은 넣지 않습니다. 로그인한 복구 요청은 시작 줄과 결과 줄 두 줄, 미리보기는 `preview` 한 줄, id 형식 오류는 한 줄을 남깁니다. 로그인하지 않은 요청(401)은 남기지 않습니다(누구나 기록을 채우지 못하게). 새 칸이나 권한은 더하지 않았습니다(서버 함수는 insert 뒤 `audit_id`만 돌려받으며, 기존 `select`·`insert` 권한 안입니다).
   - 두 테이블 모두 만든 직후 PUBLIC·anon·authenticated·service_role 권한을 거두고 RLS를 켭니다(정책 없음). service_role에는 사본 `select`, 감사 기록 `select`·`insert`만 줍니다. 감사 기록의 `update`·`delete` 권한은 아무에게도 없습니다.
   - `vault_notes`에 AFTER INSERT 트리거만 걸어, 새 메모가 생기는 순간 사본을 뜹니다. 같은 id 사본이 있으면 아무것도 하지 않습니다(`ON CONFLICT DO NOTHING`). UPDATE·DELETE에는 걸지 않아, 변조·삭제를 당해도 처음 내용이 남습니다. 사본 쓰기는 트리거 함수(소유자 권한)만 하므로 서버 키로도 사본을 고칠 수 없습니다.
   - 함수 두 개(해시 함수, 트리거 함수)는 `search_path`를 `''`로 고정하고, 안에서 쓰는 이름에 `public.`·`pg_catalog.`를 붙였습니다. 두 함수의 실행 권한은 모두 거뒀습니다.
   - `vault_notes`의 테이블·권한·RLS 정책은 바꾸지 않습니다.
 - **안전 정책 사본** (`policy/`, `scripts/policy.mjs`):
   - 9단계 판정을 받은 커밋 `23fce0d`의 정책 파일 다섯 개(`src/decider.mjs`, `supabase/notes.sql`, `notes-write-grants.sql`, `notes-rls.sql`, `notes-revoke-direct.sql`)를 `policy/files/` 아래에 이름 끝에 `.snapshot`을 붙여(예: `policy/files/src/decider.mjs.snapshot`), sha256 목록(내용 기준)을 `policy/manifest.json`에 두었습니다.
+  - 줄바꿈 고정(`.gitattributes`): `policy/**`는 `-text`, 정책 원본 5개는 `eol=lf`입니다. Windows의 `core.autocrlf=true`가 작업 폴더에서 CRLF로 바꿔 해시가 달라지는 것을 막습니다. Git에 저장된 내용은 그대로입니다.
   - `npm run policy:diff`: 사본이 없거나 목록·사본 이름·해시가 다르면 멈춥니다. 통과하면 복원할 커밋과 지금 파일과 다른 항목만 보여 줍니다.
   - `npm run policy:restore`: 기본은 미리보기입니다. `-- --apply`일 때만 다른 정책 파일을 사본 내용으로 되돌립니다. Vercel 설정, 배포된 DB, 다른 파일, 감사 기록은 건드리지 않습니다. SQL 파일을 되돌려도 DB에는 SQL Editor에서 직접 실행해야 적용됩니다.
 - **실제 DB에서 발견한 정책 변경과 되돌린 방법** (2026-10-14, `supabase/restore-check.sql` 결과):
@@ -173,7 +174,7 @@
   - 정상: `모두 통과 (12개)`. 거부되어야 할 결과: `로그인 없이 복구 — HTTP 401`, `없는 id 복구 — HTTP 404`.
   - **이전 실제 결과** (2026-10-14, 배포 커밋 `922b398`, 감사 먼저 쓰기·미리보기가 없던 버전, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. 변조 뒤 복구 `backup.verified` true·`changes` [content], 삭제 뒤 복구 `changes` [row_restored], 로그인 없이 복구 401, 없는 id 복구 404. 감사 먼저 쓰기·미리보기 버전의 실제 시험은 아직 미실행입니다.
 - **로컬 확인 순서** (로컬 시험이며 배포된 API나 심판 판정이 아닙니다):
-  1. `npm run test:restore`: 열아홉 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 본문 모양 오류 400, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
+  1. `npm run test:restore`: 스무 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 미리보기 조건(본문 true·"true", 쿼리 ?dryRun=true), 그 밖의 본문(없음·{}·다른 칸·깨진 JSON·false 등)은 400 없이 복원, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
   2. `npm run policy:diff`: `사본 검증 통과`와 `지금 파일과 다른 항목이 없습니다.`
   3. 거부되어야 할 결과가 200으로 나오면 `src/restore-api.mjs`의 주인 조건을 확인합니다.
 
