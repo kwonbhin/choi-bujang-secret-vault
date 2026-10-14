@@ -107,12 +107,19 @@
 
 10단계 계약(복구 경로 모양, 사본 위치, 해시 방법, 감사 기록 정의)은 이 저장소와 원본 시작 틀에 없습니다. 아래는 모두 **학생 설계(계약에 없음)**이며 심판 기준과 다를 수 있습니다.
 
-- **서비스·경로**: 메모 서비스(`notes`)의 복구 경로 `POST /api/restores/:id` 하나를 더했습니다(`api/restores/[id].js`, `src/restore-api.mjs`). `aleph.config.json`의 `restoreRoute`는 `"POST /api/restores/:id"`이고 `allowedRoutes`에도 넣었습니다. 빌드는 `restoreRoute`가 경로 형식이 아니거나 `allowedRoutes`에 없으면 멈추고, 맞으면 `/aleph.json`에 옮겨 적습니다. 메모 API `/api/notes`, `/api/notes/:id`의 동작은 그대로입니다.
-- **판정기는 바꾸지 않았습니다.** `src/decider.mjs`의 구역 규칙에는 복구 경로가 없어 엔진을 거치면 `starter.deny`로 거부됩니다. 복구 경로의 보안은 서버 함수가 맡습니다.
+- **서비스·경로**: 메모 서비스(`notes`) 아래 복구 경로 `POST /api/notes/:id/restore` 하나를 더했습니다(`api/notes/[id]/restore.js` → `src/restore-api.mjs`). 처음에는 `POST /api/restores/:id`였지만, 판정기 표에 없어 반 엔진을 거친 심판 요청이 API에 오지 못한 것으로 보고 메모 서비스 아래로 옮겼습니다. 옛 경로 파일은 지워 404입니다. `aleph.config.json`의 `restoreRoute`는 `"POST /api/notes/:id/restore"`이고 `allowedRoutes`에도 같은 경로만 넣었습니다. 빌드는 `restoreRoute`가 경로 형식이 아니거나 `allowedRoutes`에 없으면 멈추고, 맞으면 `/aleph.json`에 옮겨 적습니다. 메모 API `/api/notes`, `/api/notes/:id`의 동작은 그대로입니다.
+- **판정기 복구 경로 규칙** (`src/decider.mjs`, 계약 `docs/DECIDER_REQUEST.md`의 값만 읽음):
+  - 구역 표에 `'POST /notes/:id/restore'`를 메모(note) 항목으로 더했습니다(규칙 `zone_note_restore`). path가 정확히 `/notes/<id>/restore`일 때만 맞고, id는 기존 `RESOURCE_ID`·`FUNCTION_SEGMENTS` 검사를 그대로 받습니다. 쿼리가 있으면 거부합니다.
+  - `restore_verified_policy`: 복구 경로에만 적용합니다. 계약의 `request.policyRevision`이 검증한 안전 정책 버전 `1`(연습 정상 요청 `scripts/fixture-7.mjs`의 값)과 정확히 같을 때만 허용합니다. 값이 없거나 다르면(`2`, 문자열 `"1"` 포함) `deny`·`policy_unverified`·`['restore_verified_policy']`입니다.
+  - 순서: 기기 미등록 → 구역 → 추가 확인(`step_up_required`) → `restore_verified_policy`. 허용이면 `ruleIds`는 `['device_registered', 'zone_note_restore', 'restore_verified_policy']`입니다.
+  - 다른 경로의 판정은 그대로입니다. 고치기 전 판정기와 복구 경로 밖 가상 요청 1,232건을 비교해 다른 결과 0건이었습니다(로컬).
+  - `policy_unverified`가 운영 등록부의 `allowedReasonCodes`에 있는지는 확인하지 못했습니다. 계약상 등록되지 않은 코드면 엔진이 응답을 받아들이지 않지만, 이 경우는 어차피 거부입니다.
+  - DB 쪽 안전 정책 사본 `s9-safe-1`(아래)이 정책 버전 1에 대응합니다. 판정기는 DB를 읽지 않으므로 이 연결은 이름과 설명으로만 맞춥니다.
+- 반 엔진을 거치지 않는 직접 호출도 있으므로 소유자·사본 검증은 서버 함수가 다시 맡습니다.
 - **복구 서버 함수**:
-  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다. 본문과 쿼리에서는 `dryRun`만 읽습니다. 본문 모양 때문에 400으로 막지 않습니다.
+  - 로그인이 필요합니다. 사용자는 검사된 토큰의 userId로만 정하고, URL·본문·쿼리의 `owner_id`는 읽지 않습니다. 본문과 쿼리에서는 `dryRun`·`preview`만 읽습니다. 본문 모양 때문에 400으로 막지 않습니다.
   - **감사 기록 먼저**: 복원 전에 감사 기록에 시작 줄(`restore_started`)을 씁니다. 쓰지 못하면 메모·사본을 읽지도 쓰지도 않고 503 `{ error: "AUDIT_UNAVAILABLE", restored: false }`로 멈춥니다. 끝나면(성공·멈춤 모두) 결과 줄을 한 줄 더 쓰고, 응답에 `audit: { startId, resultId }`를 넣습니다. 결과 줄을 쓰지 못하면 500 `{ error: "AUDIT_FAILED", restored, audit: { startId, resultId: null } }`입니다. 감사 기록은 insert만 하고 update·delete는 하지 않습니다.
-  - **실행 전 미리보기**: 본문 `dryRun`이 `true` 또는 `"true"`이거나 쿼리 `?dryRun=true`로 부르면 사본을 두 번 읽어 검증한 뒤 `plan: { version, changes, beforeSha256, backupSha256 }`과 `backup`만 답하고(`dryRun: true`, `restored: false`) 메모는 쓰지 않습니다. 감사 기록에는 `preview` 줄 하나만 남기고 응답에 `audit: { previewId }`를 넣습니다. 사본이 없거나 검증이 실패하면 미리보기도 같은 409로 멈춥니다. 그 밖의 경우(본문 없음, `{}`, 다른 칸, 깨진 JSON, `false`, `"false"` 등)는 모두 지금처럼 복원합니다.
+  - **실행 전 미리보기**: 본문 `dryRun` 또는 `preview`가 `true`·`"true"`이거나 쿼리 `?dryRun=true`로 부르면 사본을 두 번 읽어 검증한 뒤 `plan: { version, changes, beforeSha256, backupSha256 }`과 `backup`만 답하고(`dryRun: true`, `restored: false`) 메모는 쓰지 않습니다. 감사 기록에는 `preview` 줄 하나만 남기고 응답에 `audit: { previewId }`를 넣습니다. 사본이 없거나 검증이 실패하면 미리보기도 같은 409로 멈춥니다. 그 밖의 경우(본문 없음, `{}`, 다른 칸, 깨진 JSON, `false`, `"false"` 등)는 모두 지금처럼 복원합니다.
   - 사본의 `owner_id`가 로그인 사용자이고, 지금 행이 있으면 그 `owner_id`도 로그인 사용자여야 합니다. 아니면 남의 메모든 없는 메모든 같은 404 `NOTE_NOT_FOUND`입니다.
   - **멈추는 경우** (복원하지 않고, 로그인한 요청이므로 감사 기록은 남김):
     - 자기 메모가 지금 있는데 사본이 없으면 409 `{ error: "BACKUP_MISSING", restored: false }`
@@ -144,7 +151,7 @@
   - `vault_notes`에 AFTER INSERT 트리거만 걸어, 새 메모가 생기는 순간 사본을 뜹니다. 같은 id 사본이 있으면 아무것도 하지 않습니다(`ON CONFLICT DO NOTHING`). UPDATE·DELETE에는 걸지 않아, 변조·삭제를 당해도 처음 내용이 남습니다. 사본 쓰기는 트리거 함수(소유자 권한)만 하므로 서버 키로도 사본을 고칠 수 없습니다.
   - 함수 두 개(해시 함수, 트리거 함수)는 `search_path`를 `''`로 고정하고, 안에서 쓰는 이름에 `public.`·`pg_catalog.`를 붙였습니다. 두 함수의 실행 권한은 모두 거뒀습니다.
   - `vault_notes`의 테이블·권한·RLS 정책은 바꾸지 않습니다.
-- **시험 정책과 안전 정책 사본** (`policy/`, `scripts/policy.mjs`):
+- **시험 정책과 안전 정책 사본** (`policy/`, `scripts/policy.mjs`) — **판정기 경로 규칙의 로컬 연습용**입니다. 실제 안전 정책(DB의 RLS·권한) 사본·복원은 아래 "DB 안전 정책"입니다:
   - 경과: 처음에는 시험 정책을 운영 판정기 파일로 해석해, `src/decider.mjs`와 정책 SQL 4개의 사본(`policy/files/`)으로 파일을 통째로 되돌리는 `--apply`를 만들었습니다. 이것은 "실제 운영 정책은 건드리지 않는다", "다른 서비스 규칙과 감사 이력은 보존한다"는 과제 요구와 맞지 않아, 운영 판정기와 분리된 가상 시험 정책으로 다시 만들었습니다. 옛 사본(`policy/files/`, `policy/manifest.json`), `--apply`, `policy:snapshot`은 없앴습니다.
   - `policy/test-policy.json`: **가상 시험 정책**입니다. 운영 판정기·DB 권한·배포된 자료실과 연결되지 않아, 바꿔도 실제 접근 판정은 바뀌지 않습니다. `schema`, `revision`, `services`, `audit`(감사 이력 배열)로 되어 있습니다. 처음 상태는 3차 침공을 흉내 내 notes 규칙 세 개(`ownerOnly` false, `listAllowed` true, `itemMethods`에 DELETE 추가)를 바꾼 침해 상태입니다.
   - `services`의 값은 1~10단계 구현에서 옮겼습니다(지어낸 규칙 없음). `basis` 칸에 근거를 적었습니다.
@@ -188,6 +195,25 @@
     - 미리보기 뒤 사본이나 시험 정책이 바뀌면 중단
     - CRLF 사본도 LF 기준 sha256으로 검증됨
     - 운영 판정기는 바뀌지 않음
+- **DB 안전 정책(vault_notes RLS·정책·권한) 사본·검증·차이·복원** (`supabase/step10_policy_backup.sql`, `supabase/step10_policy_restore_test.sql`, 학생이 SQL Editor에서 직접 실행):
+  - 표: `vault_policy_backup`(version, snapshot jsonb, snapshot_sha256, captured_at), `vault_policy_audit`(추가만). 두 표 모두 RLS 켜짐, PUBLIC·anon·authenticated·service_role 권한 없음, UPDATE·DELETE·TRUNCATE는 트리거로 막음.
+  - 함수(모두 security definer, `search_path ''`, 실행 권한은 PUBLIC·anon·authenticated·service_role에서 거둠 → SQL Editor에서만):
+    - `vault_policy_current()`: 지금 `vault_notes`의 RLS 켜짐·강제, 정책(이름·역할·명령·조건), 역할별 테이블·칸 권한을 jsonb로 읽음
+    - `vault_policy_sha256(jsonb)`
+    - `vault_policy_capture(version, 정책 버전)`: 지금 정책이 안전 기준과 같을 때만 사본을 남김. 아니면 거부. 같은 버전은 덮어쓰지 않음
+    - `vault_policy_verify(version)`: 사본을 다시 읽어 해시 재계산. 없거나 다르면 멈춤
+    - `vault_policy_diff(version)`: 읽기 전용, 버전과 바뀔 항목
+    - `vault_policy_restore(version, 확인)`: 확인 false면 버전·바뀔 항목만. true면 사본을 다시 읽어 검증 → `vault_notes`의 정책·권한만 사본대로 → 다시 읽어 대조, 다르면 예외로 전부 취소. 사본 없음·검증 실패면 아무것도 바꾸지 않고 멈춤
+  - 안전 기준: RLS 켜짐, `notes-rls.sql`의 본인 행 정책 4개, PUBLIC·anon·authenticated의 테이블·칸 권한 없음.
+  - 감사: 사본 남기기·검증·미리보기·복원·복원 시험은 모두 `vault_policy_audit`에 한 줄씩 남깁니다. `vault_policy_diff`는 읽기 전용이라 남기지 않습니다. 다른 표의 정책·사본·감사 기록은 건드리지 않습니다.
+  - 실행 순서: `restore-check.sql`(확인) → `step10_policy_backup.sql`(끝에서 사본 `s9-safe-1`을 남기고 결과 표) → `step10_policy_restore_test.sql`.
+    - 복원 시험은 한 트랜잭션 안에서 침공을 흉내 냅니다(모두 읽기 정책 추가, 본인 수정 정책 삭제, authenticated SELECT).
+    - 그다음 미리보기 → 복원 → 사본과 같은지, authenticated 직접 읽기 거부, B가 A 메모 0건, A 자기 메모 1건 이상을 확인합니다.
+    - 결과는 감사 기록에 pass/fail로 남기고, 실패하면 바꾼 것을 전부 취소합니다.
+  - 로컬 확인(2026-10-14): PGlite(PostgreSQL 16)에 Supabase 역할·`auth.uid()`·안전 상태 `vault_notes`를 흉내 낸 가짜 DB를 만들어 두 파일을 두 번씩 실행했습니다.
+    - 결과 표는 모두 기대값이었고, 시험은 pass였습니다.
+    - 사본·감사 수정·삭제 막힘, 없는 버전 멈춤, 침해 상태 사본 남기기 거부, 메모 주인이 한 명이면 fail·전부 취소도 확인했습니다.
+    - 실제 Supabase 실행 결과는 아직 없습니다(미실행).
 - **실제 DB에서 발견한 정책 변경과 되돌린 방법** (2026-10-14, `supabase/restore-check.sql` 결과):
   - 발견: `vault_notes`에 `authenticated`의 테이블 권한(DELETE, INSERT 등)과 칸 단위 권한이 생겨 있었습니다. 9단계 판정 커밋 `23fce0d`의 `supabase/notes-revoke-direct.sql` 기준은 "PUBLIC·anon·authenticated 권한 없음"이라 정책과 다릅니다. RLS 켜짐, 정책 4개, 칸 이름, 트리거 없음, 메모 5개는 정상이었습니다.
   - 영향: 직접 권한이 살아 있는 동안은 로그인 토큰으로 Data API에 직접 닿을 수 있었습니다. RLS 정책 4개가 그대로라 본인 행으로 제한되지만, 서버 함수의 검사(길이 제한 등)를 거치지 않는 쓰기가 가능했습니다. 언제·어떻게 생겼는지는 DB 기록으로 확인하지 않았습니다.
@@ -243,7 +269,7 @@
 - **로그아웃은 이 기기 세션만 끝냅니다**(`scope=local`). refresh 쿠키는 최대 7일 유지됩니다.
 - **공개 키와 메모 문장은 옛 커밋과 옛 배포에 남아 있습니다.** publishable key는 커밋 `a31fb32`~`b11b79c`의 `public/index.html`에, 메모 문장은 `e21bf94`(1단계)에 있습니다. 그 커밋으로 만든 옛 Vercel 배포 주소도 지우기 전까지는 내보낼 수 있으며, 옛 배포 주소는 따로 확인하지 않았습니다. 옛 커밋과 옛 배포가 남아 있는 한, 과거 노출은 해소되지 않았습니다. publishable key는 원래 공개용이며, 직접 권한 회수로 이 키만으로는 `vault_notes`에 닿지 못합니다.
 - **10단계 사본은 처음 내용만 기준입니다.** 사본은 메모가 처음 생길 때 한 번만 뜨므로, 그 뒤 주인이 정상으로 고친 내용도 복구하면 처음 내용으로 돌아갑니다. 정상 수정을 새 기준으로 삼는 방법은 만들지 않았습니다.
-- **복구 경로는 판정기 구역 표에 없습니다.** `allowedRoutes`에는 `POST /api/restores/:id`가 있지만 `src/decider.mjs`는 바꾸지 않아, 운영 엔진을 거치면 `starter.deny`로 거부됩니다. 이 저장소의 `api/`는 판정기를 부르지 않습니다.
+- **복구 경로의 판정기 허용은 로컬 가상 요청으로만 확인했습니다.** 반 엔진이 `POST /notes/:id/restore` 경로와 `policyRevision`을 어떻게 보내는지, `policy_unverified`가 등록된 이유 코드인지는 확인하지 못했습니다. 이 저장소의 `api/`는 판정기를 부르지 않습니다.
 - 4단계의 "Data API 직접 쓰기에는 길이 검사가 없음" 한계는 authenticated 직접 권한을 회수해 더는 해당하지 않습니다.
 
 ## 보너스: 무차별 로그인 경보 (`xdr/brute-force`)
@@ -274,6 +300,8 @@
    | 7 | `supabase/restore-check.sql` | 10단계 읽기 전용 확인. 권한이 기준과 다르면 `supabase/policy-restore-db.sql`을 먼저 실행하고 다시 확인 | 있음 |
    | 8 | `supabase/restore.sql` | 10단계 사본·감사 기록 테이블, 권한, AFTER INSERT 트리거 | 있음 |
    | 9 | `supabase/restore-snapshot-existing.sql` | 지금 있는 메모를 한 번 사본으로 뜸. 실행 전에 `supabase/notes-review.local.sql`(Git에 없음)로 메모가 정상인지 확인 | 있음 |
+   | 10 | `supabase/step10_policy_backup.sql` | 10단계 DB 안전 정책 사본 표·함수, 침해 전 사본 `s9-safe-1` | 있음 |
+   | 11 | `supabase/step10_policy_restore_test.sql` | 10단계 침공 흉내 → 미리보기 → 복원 → 확인(실패하면 전부 취소) | 있음 |
 
    `*.local.sql`이 없으면 3·4번 대신 화면에서 로그인해 메모를 추가합니다. 대조 조회가 있는 파일은 구역 [1]·[2]·[3]을 각각 선택해 실행하면 적용 전후 권한을 비교할 수 있습니다.
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
@@ -295,7 +323,7 @@
 - **7단계 (저장점 `e757df3`, 보충 `97d06f2`)**: 판정기 규칙 `step_up_required`와 접속 신호 입력 검사. 평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 `step_up`, 엔진의 추가 인증 뒤에는 다시 판정해 허용합니다. 저장점 뒤에 평소와 다른 시각을 `signals.hour` 0~5시로 바꿨습니다.
 - **8단계 (저장점 `3391c25`, 수정 `810142a`)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 한 건 읽기·수정만 경로상 허용하고, 강사 공지 쓰기(POST·PUT·PATCH·DELETE)는 강사 역할 계약이 없어 항상 거부, 메모 전체 목록과 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다. 수정 커밋에서 메모 전체 목록을 거부하고 공지 쓰기 네 메서드를 `zone_notice_update`로 명시했습니다.
 - **9단계 (저장점 `6487932`, 보충 `23fce0d`)**: 탐지기 `src/detect.mjs`. 같은 가명 사용자(`identity.sub`)의 GET이 어느 10분 구간에서든 120건을 넘으면 `propose_revocation`·`burst_read` 제안을 돌려줍니다. 집행은 하지 않습니다. 보충 커밋에서 README에 한계 두 줄(중복 사건, 대문자 GET만)을 더했습니다.
-- **10단계 (이 저장점, 학생 설계·계약에 없음)**: 복구 경로 `POST /api/restores/:id`, 메모 사본·감사 기록 테이블과 내용 해시, 운영 판정기와 분리된 가상 시험 정책 `policy/test-policy.json`과 안전 사본·manifest(서비스 하나만 복원, 감사 이력 보존), 실제 DB에서 발견한 `authenticated` 권한을 `supabase/policy-restore-db.sql`로 되돌림, 배포 복구 확인 `npm run restore:live-check`.
+- **10단계 (이 저장점, 학생 설계·계약에 없음)**: 복구 경로 `POST /api/notes/:id/restore`와 판정기 `zone_note_restore`·`restore_verified_policy`(정책 버전 1), DB 안전 정책(RLS·권한) 사본·검증·복원 SQL, 메모 사본·감사 기록 테이블과 내용 해시, 판정기 경로 규칙 연습용 가상 시험 정책 `policy/test-policy.json`과 안전 사본·manifest(서비스 하나만 복원, 감사 이력 보존), 실제 DB에서 발견한 `authenticated` 권한을 `supabase/policy-restore-db.sql`로 되돌림, 배포 복구 확인 `npm run restore:live-check`.
 
 ## 가상 메모 문장 검색 절차
 
