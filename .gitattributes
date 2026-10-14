@@ -8,3 +8,5 @@ supabase/notes.sql text eol=lf
 supabase/notes-write-grants.sql text eol=lf
 supabase/notes-rls.sql text eol=lf
 supabase/notes-revoke-direct.sql text eol=lf
+# 11단계 아이콘: 바이너리로 둡니다(줄바꿈 변환 안 함).
+public/icons/*.png binary

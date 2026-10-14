@@ -13,6 +13,7 @@
     "xdr:run": "node scripts/xdr-run.mjs",
     "test:restore": "node --test test/restore.test.mjs",
     "test:policy": "node --test test/policy.test.mjs",
+    "test:device": "node --test test/device.test.mjs",
     "policy:diff": "node scripts/policy.mjs diff",
     "policy:restore": "node scripts/policy.mjs restore",
     "restore:live-check": "node scripts/restore-live-check.mjs"

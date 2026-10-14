@@ -84,11 +84,15 @@ function fakeSupabase(tables) {
 }
 
 // bodyThrows: 배포 환경에서 깨진 JSON 본문을 읽을 때처럼 request.body 읽기가 오류를 냅니다.
+// 11단계 기기 검사는 test/device.test.mjs에서 따로 시험합니다. 여기서는 승인된 기기로 봅니다.
+const APPROVED_DEVICE = async () => ({ ok: true });
+
 async function call(tables, { user = B, method = 'POST', id, body, query = {}, auth = true, bodyThrows = false } = {}) {
   const handler = createRestoreHandler(() => ({
     verifyLogin: async header => (header === 'Bearer good' ? { userId: user } : null),
     supabase: fakeSupabase(tables),
     sealer: SEALER,
+    checkDevice: APPROVED_DEVICE,
   }));
   let status;
   let json;
@@ -518,7 +522,7 @@ test('POST /api/notes: 생성 직후 사본으로 봉인, 봉인 쓰기가 실�
     tables.failInsert = name => failSeal && name === 'vault_notes_backup_seal';
     const handler = createNotesHandler('collection', () => ({
       verifyLogin: async header => (header === 'Bearer good' ? { userId: B } : null),
-      supabase: fakeSupabase(tables), sealer: SEALER,
+      supabase: fakeSupabase(tables), sealer: SEALER, checkDevice: APPROVED_DEVICE,
     }));
     const logged = [];
     const original = console.error;

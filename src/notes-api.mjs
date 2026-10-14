@@ -3,12 +3,15 @@
 // 요청 URL·본문의 userId·role·owner_id로 소유자를 정하지 않습니다.
 // 키는 Vercel 환경변수에서만 읽고 응답·로그에 넣지 않습니다.
 // 4단계 소유자 검사: 모든 읽기·수정·삭제 조회에 owner_id = 검사된 userId 조건을 함께 겁니다.
+// 11단계 기기 검사: 학생 로그인이면 로그인 확인 뒤, 자료를 읽거나 쓰기 전에 기기 확인 결과와 등록부를 다시 확인합니다
+// (src/device-gate.mjs). 없거나 승인 아님이면 자료 없이 403입니다. 심판 토큰에는 이 브라우저 기기 검사를 걸지 않습니다.
 // 남의 메모와 없는 메모는 같은 404 NOTE_NOT_FOUND로 답해 있는지 없는지 드러내지 않습니다.
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from './verify-login.mjs';
 import { createSealer, sealNewNote } from './backup-seal.mjs';
+import { createDeviceGate, createDeviceSigner, guardDevice, supabaseDeviceStore } from './device-gate.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const TITLE_MAX = 200;
@@ -24,12 +27,14 @@ function loadDeps() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) throw new Error('SUPABASE_URL 또는 SUPABASE_SECRET_KEY 환경변수가 없습니다.');
+  const supabase = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
   cached = {
     verifyLogin: createLoginVerifier({ config, supabaseSecretKey: key }),
-    supabase: createClient(url, key, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    }),
+    supabase,
     sealer: createSealer(key),
+    checkDevice: createDeviceGate({ signer: createDeviceSigner(key), store: supabaseDeviceStore(supabase) }),
   };
   return cached;
 }
@@ -150,6 +155,7 @@ export function createNotesHandler(route, getDeps = loadDeps) {
       send(401, { error: authorization ? 'INVALID_LOGIN' : 'LOGIN_REQUIRED' });
       return;
     }
+    if (!(await guardDevice(deps, login, request, send))) return;
     const id = route === 'item' ? request.query?.id : undefined;
     if (route === 'item' && (typeof id !== 'string' || !UUID.test(id))) {
       send(400, { error: 'INVALID_ID' });

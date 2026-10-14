@@ -2,10 +2,12 @@
 // 화면 코드에는 Supabase 주소와 publishable key가 없습니다.
 // 이 서버 함수는 Vercel 환경변수 SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY만 씁니다(서버 전용 키는 쓰지 않음).
 //
-// 토큰 위치:
-// - access token: 응답 본문으로만 돌려주고 화면은 메모리 변수에만 둡니다(저장소에 쓰지 않음).
-// - refresh token: 응답 본문에 넣지 않고 HttpOnly·Secure·SameSite=Strict 쿠키(Path=/api/auth)로만 둡니다.
-//   화면 스크립트가 읽을 수 없어 XSS로 빼 가기 어렵고, 다른 사이트에서 보낸 요청에는 실리지 않습니다.
+// 토큰 위치(11단계부터):
+// - access token·refresh token 모두 응답 본문으로만 돌려주고 화면은 메모리 변수에만 둡니다.
+//   localStorage·sessionStorage·쿠키·IndexedDB에 쓰지 않습니다. 새로고침하면 다시 로그인합니다.
+// - 토큰 갱신은 화면이 메모리의 refresh token을 JSON 본문 {refresh_token}으로 보낼 때만 합니다.
+// - 5~10단계에 쓰던 HttpOnly 쿠키(vault_refresh)는 더 만들지 않고, 로그인·갱신·로그아웃 응답에서 지우기만 합니다.
+//   (쿠키는 화면 스크립트가 읽을 수 없다는 장점이 있었지만, 토큰을 브라우저 저장소에 두지 않기로 했습니다.)
 //
 // 비밀번호·토큰·이메일은 로그에 남기지 않습니다. 실패할 때도 오류 코드만 남깁니다.
 // 이 경로들은 JSON 본문(Content-Type: application/json)의 POST만 받습니다.
@@ -14,7 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const COOKIE = 'vault_refresh';
 const COOKIE_PATH = '/api/auth';
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+const REFRESH_MAX = 2048;
 const EMAIL_MAX = 320;
 const PASSWORD_MAX = 1024;
 // 화면이 이유를 보여 주는 Supabase Auth 오류 코드만 그대로 전달합니다.
@@ -35,31 +37,26 @@ function authClient({ url, key }) {
   });
 }
 
-function setRefreshCookie(response, token) {
-  response.setHeader('Set-Cookie', `${COOKIE}=${encodeURIComponent(token)}; Path=${COOKIE_PATH}; `
-    + `Max-Age=${COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Strict`);
-}
-
+// 예전 단계가 남긴 쿠키를 지웁니다. 새 쿠키는 만들지 않습니다.
 function clearRefreshCookie(response) {
   response.setHeader('Set-Cookie', `${COOKIE}=; Path=${COOKIE_PATH}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
 }
 
-function readRefreshCookie(request) {
-  const header = request.headers?.cookie;
-  if (typeof header !== 'string') return null;
-  for (const part of header.split(';')) {
-    const [name, ...rest] = part.trim().split('=');
-    if (name === COOKIE) {
-      try { return decodeURIComponent(rest.join('=')) || null; } catch { return null; }
-    }
+// 본문 {refresh_token}만 읽습니다. 쿠키는 읽지 않습니다.
+function readRefreshToken(raw) {
+  let input = raw;
+  if (typeof input === 'string') {
+    try { input = JSON.parse(input); } catch { return null; }
   }
-  return null;
+  const token = input && typeof input === 'object' && !Array.isArray(input) ? input.refresh_token : null;
+  return typeof token === 'string' && token && token.length <= REFRESH_MAX && /^[A-Za-z0-9._-]+$/u.test(token) ? token : null;
 }
 
-// 화면에 돌려주는 값: access token, 만료 시각(초), 표시할 이메일. refresh token은 넣지 않습니다.
+// 화면에 돌려주는 값: access token, refresh token, 만료 시각(초), 표시할 이메일. 화면은 메모리에만 둡니다.
 function sessionBody(session) {
   return {
     access_token: session.access_token,
+    refresh_token: session.refresh_token,
     expires_at: session.expires_at,
     user: { email: session.user?.email ?? null },
   };
@@ -93,25 +90,24 @@ const actions = {
       console.error('auth: 로그인 실패', code);
       return [code === 'over_request_rate_limit' ? 429 : 401, { error: code }];
     }
-    setRefreshCookie(response, data.session.refresh_token);
+    clearRefreshCookie(response);
     return [200, sessionBody(data.session)];
   },
 
   async refresh({ request, response, config }) {
-    const refreshToken = readRefreshCookie(request);
+    clearRefreshCookie(response);
+    const refreshToken = readRefreshToken(request.body);
     if (!refreshToken) return [401, { error: 'NO_SESSION' }];
     const { data, error } = await authClient(config).auth.refreshSession({ refresh_token: refreshToken });
     if (error || !data?.session) {
-      clearRefreshCookie(response);
       console.error('auth: 토큰 갱신 실패', error?.code || 'unknown');
       return [401, { error: 'SESSION_EXPIRED' }];
     }
-    setRefreshCookie(response, data.session.refresh_token);
     return [200, sessionBody(data.session)];
   },
 
   async logout({ request, response, config }) {
-    // 쿠키는 결과와 상관없이 지웁니다. access token이 있으면 Supabase에서도 이 세션을 끝냅니다.
+    // 예전 쿠키는 결과와 상관없이 지웁니다. access token이 있으면 Supabase에서도 이 세션을 끝냅니다.
     clearRefreshCookie(response);
     const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/u
       .exec(request.headers?.authorization ?? '');

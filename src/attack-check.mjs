@@ -210,7 +210,8 @@ export async function runAttackChecks(config) {
         observed: leaked ? '화면 또는 /api/notes 응답에 서버 전용 키로 보이는 값이 있음' : '화면과 /api/notes 응답 3건에서 서버 전용 키 형태가 보이지 않음' },
     ];
   }
-  if (config.step >= 5 && config.step <= 10) {
+  // 11단계도 같은 점검을 이어 씁니다(점검 상한 20개). 기기 승인 검사는 로그인 확인 뒤라 로그인 없는 요청은 그대로 401입니다.
+  if (config.step >= 5 && config.step <= 11) {
     const list = await get(app, '/api/notes');
     const forged = await get(app, '/api/notes', {
       headers: { Authorization: `Bearer ${forgedToken(config)}` },
