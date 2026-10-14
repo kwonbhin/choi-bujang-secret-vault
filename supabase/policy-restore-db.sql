@@ -1,5 +1,5 @@
 -- 10단계: 안전 정책 사본을 기준으로 vault_notes의 DB 권한을 되돌립니다. 학생 설계(계약에 없음).
--- 기준: policy/files/supabase/notes-revoke-direct.sql.snapshot (커밋 23fce0d, policy/manifest.json의 sha256으로 검증된 사본)
+-- 기준: 9단계 커밋 23fce0d의 supabase/notes-revoke-direct.sql (git show 23fce0d:supabase/notes-revoke-direct.sql로 확인)
 --   → vault_notes에는 PUBLIC·anon·authenticated의 테이블 권한과 칸 단위 권한이 없어야 합니다.
 -- 하는 일: vault_notes에서 PUBLIC·anon·authenticated의 테이블 권한과 모든 칸의 칸 단위 권한만 거둡니다.
 -- 하지 않는 일: service_role 권한, RLS 켜짐 여부, RLS 정책 4개, 다른 테이블, 함수, 트리거는 건드리지 않습니다.
