@@ -1,0 +1,7 @@
+{
+  "schema": "aleph.student.safe-policy-manifest.v1",
+  "file": "safe-policy.json",
+  "revision": 9,
+  "verifiedAt": "2026-10-14T01:54:53.101Z",
+  "sha256": "c6afb187871a3414fd1e59fd3aaa4a9d9957691d1a1f64ca039f8dcc697a5cbe"
+}

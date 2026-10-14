@@ -351,18 +351,23 @@ export async function runAttackChecks(config) {
         const forgedRestore = await get(app, restorePath, {
           method: 'POST', headers: { Authorization: `Bearer ${forgedToken(config)}` },
         });
+        // 가상 시험 정책(policy/test-policy.json)을 읽기만 합니다. 운영 판정기는 9단계 판정 커밋과 같은지만 봅니다.
         let policy;
         try {
-          const { verifiedManifest, differences } = await import('../scripts/policy.mjs');
-          const manifest = verifiedManifest();
-          policy = `사본 검증 통과(커밋 ${manifest.commit.slice(0, 7)}, 파일 ${manifest.files.length}개), 지금 파일과 다른 항목 ${differences(manifest).length}개`;
+          const { diffReport, operationalDeciderCheck } = await import('../scripts/policy.mjs');
+          const report = diffReport();
+          const decider = operationalDeciderCheck();
+          const changed = report.services.filter(item => item.changes.length)
+            .map(item => `${item.service} ${item.changes.length}`).join(', ');
+          policy = `사본 검증 통과(revision ${report.revision}, 검증 시각 ${report.verifiedAt}), 시험 정책과 바뀔 항목 ${report.total}개${changed ? `(${changed})` : ''}, `
+            + `운영 판정기 src/decider.mjs ${decider.same ? `미변경(커밋 ${decider.baseline}와 같음)` : `커밋 ${decider.baseline}와 다름`}`;
         } catch (error) {
-          policy = `사본 검증 실패: ${String(error?.message).slice(0, 80)}`;
+          policy = `사본 검증 실패(복원을 중단합니다): ${String(error?.message).slice(0, 80)}`;
         }
         checks.push(
           { attackId: 'restore_without_login', expected: '로그인 없이, 또는 서명 없는 가짜 토큰으로 POST /api/restores/:id는 401 JSON으로 거부됨',
             observed: `로그인 없이 ${await describe(anonymousRestore)} / 가짜 토큰 ${await describe(forgedRestore)}` },
-          { attackId: 'restore_policy_snapshot', expected: '정책 사본(policy/manifest.json)의 sha256이 사본 파일과 맞고, 지금 정책 파일과 다른 항목이 0개',
+          { attackId: 'restore_policy_snapshot', expected: '안전 정책 사본의 sha256·revision이 manifest와 맞고, 가상 시험 정책과 바뀔 항목이 0개, 운영 판정기는 바뀌지 않음',
             observed: `로컬 npm run policy:diff와 같은 검사: ${policy}` },
           { attackId: 'restore_owner_flow_live', expected: 'B가 자기 메모를 변조·삭제한 뒤 미리보기(dryRun)는 아무것도 안 바꾸고, 복구하면 처음 해시와 같고 감사 시작·결과 id가 있음, 없는 id는 404',
             observed: await liveRestoreObserved() },

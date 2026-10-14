@@ -1,7 +1,9 @@
-# 10단계 정책 사본: sha256을 내용 기준으로 비교하므로 어떤 PC에서도 줄바꿈을 바꾸지 않습니다.
+# 10단계 시험 정책·안전 정책 사본·manifest(policy/*.json): sha256을 비교하므로 어떤 PC에서도 줄바꿈을 바꾸지 않습니다.
+# (scripts/policy.mjs도 LF로 맞춘 내용으로 sha256을 계산합니다.)
 policy/** -text
-# 정책 원본 파일 5개: 사본과 같은 해시가 나오도록 작업 폴더에서도 LF로 고정합니다.
+# 운영 판정기: 정책 복원 뒤 9단계 판정 커밋과 같은지(sha256) 확인하므로 작업 폴더에서도 LF로 고정합니다.
 src/decider.mjs text eol=lf
+# 9단계 정책 SQL: 줄바꿈을 LF로 고정해 둡니다(정책 복원은 이 파일들을 읽거나 쓰지 않습니다).
 supabase/notes.sql text eol=lf
 supabase/notes-write-grants.sql text eol=lf
 supabase/notes-rls.sql text eol=lf

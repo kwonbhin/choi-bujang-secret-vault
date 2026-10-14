@@ -1,0 +1,79 @@
+{
+  "schema": "aleph.student.test-policy.v1",
+  "note": "가상 시험 정책입니다. 운영 판정기(src/decider.mjs)·DB 권한·배포된 자료실과 연결되지 않으며, 이 파일을 바꿔도 실제 접근 판정은 바뀌지 않습니다. 처음 상태는 3차 침공을 흉내 내 notes 규칙 세 개를 바꾼 침해 상태입니다.",
+  "revision": 10,
+  "services": {
+    "notes": {
+      "ownerOnly": true,
+      "listAllowed": false,
+      "itemMethods": [
+        "GET",
+        "PUT"
+      ],
+      "basis": "4단계 owner_id 조건(남의 메모는 404), 8단계 구역 GET·PUT /notes/:id만 허용, GET /notes 목록은 구역 표에 없어 거부"
+    },
+    "notices": {
+      "writeAllowed": false,
+      "basis": "8단계 zone_notice_update: 강사 역할 계약이 없어 공지 쓰기(POST·PUT·PATCH·DELETE)는 모두 거부"
+    },
+    "devices": {
+      "registeredOnly": true,
+      "basis": "6단계 device_registered: deviceRegistered가 정확히 true일 때만 등록 기기"
+    },
+    "stepUp": {
+      "unusualHours": {
+        "from": 0,
+        "to": 5
+      },
+      "unusualNetwork": "unusual",
+      "burstWindowSeconds": 600,
+      "burstCountAbove": 10,
+      "requireAllThree": true,
+      "untrustedSignals": "step_up",
+      "maxAuthAgeSeconds": 300,
+      "regionUsed": false,
+      "basis": "7단계 step_up_required: 새벽 0~5시·처음 보는 네트워크·10분 안 읽기 10건 초과가 함께면 추가 확인, 확인 뒤 5분 안이면 허용"
+    },
+    "detect": {
+      "method": "GET",
+      "windowSeconds": 600,
+      "burstLimitAbove": 120,
+      "action": "propose_revocation",
+      "enforce": false,
+      "basis": "9단계 detect: 같은 sub의 GET이 어느 10분 안에 120건을 넘으면 회수 제안만(집행 안 함)"
+    },
+    "noteRestore": {
+      "ownerOnly": true,
+      "verifyBackupHash": true,
+      "rereadBackupBeforeWrite": true,
+      "stopWhenBackupMissing": true,
+      "auditFirst": true,
+      "basis": "10단계 src/restore-api.mjs: 자기 메모 한 건만, 사본 해시 재계산·복원 직전 재읽기, 사본 없음·검증 실패면 멈춤, 감사 시작 줄 먼저"
+    }
+  },
+  "audit": [
+    {
+      "at": "2026-10-14T01:54:53.101Z",
+      "event": "simulated_breach",
+      "service": "notes",
+      "changed": [
+        "itemMethods",
+        "listAllowed",
+        "ownerOnly"
+      ],
+      "note": "3차 침공을 흉내 낸 가상 변경(시험용 처음 상태)"
+    },
+    {
+      "at": "2026-10-14T01:56:31.943Z",
+      "event": "restore",
+      "service": "notes",
+      "revision": 9,
+      "safeSha256": "c6afb187871a3414fd1e59fd3aaa4a9d9957691d1a1f64ca039f8dcc697a5cbe",
+      "changed": [
+        "itemMethods",
+        "listAllowed",
+        "ownerOnly"
+      ]
+    }
+  ]
+}

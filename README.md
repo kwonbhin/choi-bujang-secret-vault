@@ -144,13 +144,52 @@
   - `vault_notes`에 AFTER INSERT 트리거만 걸어, 새 메모가 생기는 순간 사본을 뜹니다. 같은 id 사본이 있으면 아무것도 하지 않습니다(`ON CONFLICT DO NOTHING`). UPDATE·DELETE에는 걸지 않아, 변조·삭제를 당해도 처음 내용이 남습니다. 사본 쓰기는 트리거 함수(소유자 권한)만 하므로 서버 키로도 사본을 고칠 수 없습니다.
   - 함수 두 개(해시 함수, 트리거 함수)는 `search_path`를 `''`로 고정하고, 안에서 쓰는 이름에 `public.`·`pg_catalog.`를 붙였습니다. 두 함수의 실행 권한은 모두 거뒀습니다.
   - `vault_notes`의 테이블·권한·RLS 정책은 바꾸지 않습니다.
-- **안전 정책 사본** (`policy/`, `scripts/policy.mjs`):
-  - 9단계 판정을 받은 커밋 `23fce0d`의 정책 파일 다섯 개(`src/decider.mjs`, `supabase/notes.sql`, `notes-write-grants.sql`, `notes-rls.sql`, `notes-revoke-direct.sql`)를 `policy/files/` 아래에 이름 끝에 `.snapshot`을 붙여(예: `policy/files/src/decider.mjs.snapshot`), sha256 목록(내용 기준)을 `policy/manifest.json`에 두었습니다.
-  - 줄바꿈 고정(`.gitattributes`): `policy/**`는 `-text`, 정책 원본 5개는 `eol=lf`입니다. Windows의 `core.autocrlf=true`가 작업 폴더에서 CRLF로 바꿔 해시가 달라지는 것을 막습니다. Git에 저장된 내용은 그대로입니다.
-  - `npm run policy:diff`: 사본이 없거나 목록·사본 이름·해시가 다르면 멈춥니다. 통과하면 복원할 커밋과 지금 파일과 다른 항목만 보여 줍니다.
-  - `npm run policy:restore`: 기본은 미리보기입니다. `-- --apply`일 때만 다른 정책 파일을 사본 내용으로 되돌립니다. Vercel 설정, 배포된 DB, 다른 파일, 감사 기록은 건드리지 않습니다. SQL 파일을 되돌려도 DB에는 SQL Editor에서 직접 실행해야 적용됩니다.
+- **시험 정책과 안전 정책 사본** (`policy/`, `scripts/policy.mjs`):
+  - 경과: 처음에는 시험 정책을 운영 판정기 파일로 해석해, `src/decider.mjs`와 정책 SQL 4개의 사본(`policy/files/`)으로 파일을 통째로 되돌리는 `--apply`를 만들었습니다. 이것은 "실제 운영 정책은 건드리지 않는다", "다른 서비스 규칙과 감사 이력은 보존한다"는 과제 요구와 맞지 않아, 운영 판정기와 분리된 가상 시험 정책으로 다시 만들었습니다. 옛 사본(`policy/files/`, `policy/manifest.json`), `--apply`, `policy:snapshot`은 없앴습니다.
+  - `policy/test-policy.json`: **가상 시험 정책**입니다. 운영 판정기·DB 권한·배포된 자료실과 연결되지 않아, 바꿔도 실제 접근 판정은 바뀌지 않습니다. `schema`, `revision`, `services`, `audit`(감사 이력 배열)로 되어 있습니다. 처음 상태는 3차 침공을 흉내 내 notes 규칙 세 개(`ownerOnly` false, `listAllowed` true, `itemMethods`에 DELETE 추가)를 바꾼 침해 상태입니다.
+  - `services`의 값은 1~10단계 구현에서 옮겼습니다(지어낸 규칙 없음). `basis` 칸에 근거를 적었습니다.
+
+    | 서비스 | 규칙(안전 값) | 근거 |
+    |---|---|---|
+    | `notes` | `ownerOnly` true, `listAllowed` false, `itemMethods` [GET, PUT] | 4단계 owner_id 조건, 8단계 구역 GET·PUT `/notes/:id`, 목록은 구역 표에 없음 |
+    | `notices` | `writeAllowed` false | 8단계 `zone_notice_update` |
+    | `devices` | `registeredOnly` true | 6단계 `device_registered` |
+    | `stepUp` | 0~5시·`unusual` 네트워크·600초 안 10건 초과가 함께면 추가 확인, 확인 뒤 300초, 지역 미사용 | 7단계 `step_up_required` |
+    | `detect` | GET, 600초 안 120건 초과면 `propose_revocation`, 집행 안 함 | 9단계 `src/detect.mjs` |
+    | `noteRestore` | 소유자만, 사본 해시 재계산·복원 직전 재읽기, 사본 없으면 멈춤, 감사 먼저 | 10단계 `src/restore-api.mjs` |
+
+  - `policy/safe-policy.json`: 침해 전에 검증한 안전 사본입니다(`revision` 9, `verifiedAt`). 값은 9단계 판정 커밋 `23fce0d`의 구현과 같습니다(그 뒤 `src/decider.mjs`, `src/detect.mjs`, `src/notes-api.mjs`는 바뀌지 않음).
+  - `policy/safe-policy.manifest.json`: 사본 파일 이름, `revision`, `verifiedAt`, LF로 맞춘 내용의 sha256입니다.
+  - `npm run policy:diff`: 사본과 manifest의 sha256·revision·verifiedAt을 대조합니다. 복원할 버전과 서비스별 바뀔 항목(지금 값 → 사본 값), "B가 A 메모 읽기" 허용·거부를 한 줄로 보여 줍니다. 아무것도 쓰지 않습니다. manifest가 없거나, 사본이 없거나, sha256·revision이 다르면 `복원을 중단합니다: …`로 종료 코드 1입니다.
+  - `npm run policy:restore -- --service <이름>`: 기본은 미리보기만 합니다. `--confirm`이 있을 때만 씁니다.
+    - 쓰기 직전에 사본·manifest·시험 정책을 다시 읽어 검증하고, 미리보기 때와 다르면 중단합니다.
+    - 지정한 서비스 하나의 규칙만 사본 값으로 바꿉니다. 다른 서비스 규칙과 이미 있던 `audit` 줄은 그대로 둡니다.
+    - `audit`에는 이번 복원 한 줄(시각, 서비스, revision, 사본 sha256, 바뀐 항목 이름)만 덧붙입니다.
+    - 쓴 뒤 다시 읽어 "대상 서비스는 사본과 같음, 다른 서비스 그대로, 이전 감사 이력 그대로"를 확인하고, 틀리면 쓰기 전 내용으로 되돌리고 중단합니다.
+    - 사본에 없는 서비스를 지정하면 중단합니다. `--apply`는 없앴습니다(주면 중단).
+  - 이 기능은 `policy/` 안의 세 파일만 다룹니다. 운영 판정기(`src/decider.mjs`), DB 권한, `supabase/*.sql`, 메모 복구 경로는 읽거나 쓰지 않습니다(운영 판정기 미변경 확인만 읽음).
+  - 줄바꿈 고정(`.gitattributes`): `policy/**`는 `-text`, `src/decider.mjs`와 9단계 정책 SQL 4개는 `eol=lf`입니다. sha256도 LF로 맞춘 내용으로 계산해서 PC마다 같은 값이 나옵니다.
+  - **실제 저장소에서 실행한 결과** (2026-10-14 01:56 UTC, `node scripts/policy.mjs …`로 실행. `npm run policy:*`와 같은 명령):
+
+    | 순서 | 명령 | 결과 |
+    |---|---|---|
+    | 0 | `src/decider.mjs` sha256 | `a7de40b2b649…`, 커밋 `23fce0d`와 같음 |
+    | 1 | `policy:diff` | 사본 검증 통과(sha256 `c6afb187871a`, revision 9). notes 3개 바뀜(`itemMethods` ["GET","PUT","DELETE"] → ["GET","PUT"], `listAllowed` true → false, `ownerOnly` false → true), 다른 서비스 없음. B가 A 메모 읽기: 지금 허용, 사본 거부. 종료 0 |
+    | 2 | `policy:restore -- --service notes` | 미리보기, 아무것도 쓰지 않음. 종료 0 |
+    | 3 | `policy:restore -- --service notes --confirm` | notes만 바꿈. 쓴 뒤 확인: 대상 사본과 같음 true, 다른 서비스 그대로 true, 이전 감사 이력 그대로 true(1줄 → 2줄). B가 A 메모 읽기: 이제 거부. 종료 0 |
+    | 4 | `policy:diff` | 모든 서비스 바뀔 항목 없음. B가 A 메모 읽기: 지금 거부, 사본 거부. 종료 0 |
+    | 5 | `src/decider.mjs` sha256 | `a7de40b2b649…`, 실행 전과 같음(커밋 `23fce0d`와 같음) |
+
+    그래서 저장소의 `policy/test-policy.json`은 notes가 복원된 상태이고, `audit`는 침해 흉내 한 줄과 복원 한 줄입니다.
+  - 로컬 시험 `npm run test:policy`(8개)는 임시 폴더에서 다음을 확인합니다.
+    - 미리보기는 아무것도 쓰지 않음
+    - 지정 서비스만 복원되고 다른 서비스·감사 이력은 보존됨. B의 A 메모 읽기는 거부로 바뀌고 A 자기 메모는 허용
+    - manifest 없음·사본 없음·sha256 다름·revision 다름·없는 서비스는 중단, CLI 종료 코드 1
+    - 미리보기 뒤 사본이나 시험 정책이 바뀌면 중단
+    - CRLF 사본도 LF 기준 sha256으로 검증됨
+    - 운영 판정기는 바뀌지 않음
 - **실제 DB에서 발견한 정책 변경과 되돌린 방법** (2026-10-14, `supabase/restore-check.sql` 결과):
-  - 발견: `vault_notes`에 `authenticated`의 테이블 권한(DELETE, INSERT 등)과 칸 단위 권한이 생겨 있었습니다. 안전 정책 사본(`policy/`, 커밋 `23fce0d`)의 기준은 "PUBLIC·anon·authenticated 권한 없음"이라 정책과 다릅니다. RLS 켜짐, 정책 4개, 칸 이름, 트리거 없음, 메모 5개는 정상이었습니다.
+  - 발견: `vault_notes`에 `authenticated`의 테이블 권한(DELETE, INSERT 등)과 칸 단위 권한이 생겨 있었습니다. 9단계 판정 커밋 `23fce0d`의 `supabase/notes-revoke-direct.sql` 기준은 "PUBLIC·anon·authenticated 권한 없음"이라 정책과 다릅니다. RLS 켜짐, 정책 4개, 칸 이름, 트리거 없음, 메모 5개는 정상이었습니다.
   - 영향: 직접 권한이 살아 있는 동안은 로그인 토큰으로 Data API에 직접 닿을 수 있었습니다. RLS 정책 4개가 그대로라 본인 행으로 제한되지만, 서버 함수의 검사(길이 제한 등)를 거치지 않는 쓰기가 가능했습니다. 언제·어떻게 생겼는지는 DB 기록으로 확인하지 않았습니다.
   - 칸 단위 권한 표(`information_schema.column_privileges`)는 테이블 권한도 칸마다 다시 보여 주므로, 칸 단위 항목이 별도로 준 권한인지는 이 표만으로 구별되지 않습니다.
   - 되돌린 방법: `supabase/policy-restore-db.sql`. 기준 사본 `notes-revoke-direct.sql`과 같은 방식으로 `vault_notes`에서 PUBLIC·anon·authenticated의 테이블 권한과 **지금 있는 모든 칸**의 칸 단위 권한만 거둡니다. service_role 권한, RLS, 정책 4개, 다른 테이블은 건드리지 않습니다. 여러 번 실행해도 되고, 마지막 표에서 되돌린 뒤 상태를 기대값과 함께 보여 줍니다.
@@ -175,7 +214,7 @@
   - **이전 실제 결과** (2026-10-14, 배포 커밋 `922b398`, 감사 먼저 쓰기·미리보기가 없던 버전, 학생이 자기 터미널에서 실행): `모두 통과 (10개)`. 변조 뒤 복구 `backup.verified` true·`changes` [content], 삭제 뒤 복구 `changes` [row_restored], 로그인 없이 복구 401, 없는 id 복구 404. 감사 먼저 쓰기·미리보기 버전의 실제 시험은 아직 미실행입니다.
 - **로컬 확인 순서** (로컬 시험이며 배포된 API나 심판 판정이 아닙니다):
   1. `npm run test:restore`: 스무 줄 모두 `✔`(B 변조·삭제 복구와 응답의 검증 칸, B가 A 메모 404, 없는 id 404, 로그인 없음 401, 사본 없음 409 `BACKUP_MISSING`, 해시 대조 실패·복원 직전 다시 읽은 사본이 다름 409 `BACKUP_VERIFICATION_FAILED`(복원 안 됨), 사본을 두 번 읽음, 다른 메모·감사 기록 보존, 감사 시작 줄 실패 시 503·복원 안 됨, `audit` id 응답, 결과 줄 실패 시 500, `dryRun`은 아무것도 안 씀, 미리보기 조건(본문 true·"true", 쿼리 ?dryRun=true), 그 밖의 본문(없음·{}·다른 칸·깨진 JSON·false 등)은 400 없이 복원, 기존 감사 줄 보존). 감사 기록 실패 시험 중에는 `restores: 감사 기록을 남기지 못했습니다. 42501` 줄이 일부러 찍힙니다.
-  2. `npm run policy:diff`: `사본 검증 통과`와 `지금 파일과 다른 항목이 없습니다.`
+  2. `npm run test:policy`: 여덟 줄 모두 `✔`. `npm run policy:diff`: `안전 정책 사본 검증 통과`, 모든 서비스 `없음`, `B가 A 메모 읽기 … 지금 시험 정책 거부`, 종료 코드 0
   3. 거부되어야 할 결과가 200으로 나오면 `src/restore-api.mjs`의 주인 조건을 확인합니다.
 
 ### 복구 뒤 1~9단계 정상·금지 요청 다시 실행하기 (제작 4)
@@ -239,7 +278,7 @@
    `*.local.sql`이 없으면 3·4번 대신 화면에서 로그인해 메모를 추가합니다. 대조 조회가 있는 파일은 구역 [1]·[2]·[3]을 각각 선택해 실행하면 적용 전후 권한을 비교할 수 있습니다.
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
 3. `main`에 push하면 Vercel이 배포합니다. `/aleph.json`의 `step`과 `commit`으로 배포된 커밋을 확인합니다.
-4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`, `npm run detect:test`, `npm run test:restore`, `npm run policy:diff`. 배포된 복구 확인은 자기 터미널에서 `npm run restore:live-check`(B 계정 필요). 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
+4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`, `npm run detect:test`, `npm run test:restore`, `npm run test:policy`, `npm run policy:diff`. 배포된 복구 확인은 자기 터미널에서 `npm run restore:live-check`(B 계정 필요). 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
 5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름·메모 전체 목록·공지 삭제의 응답 일곱 개를, 9단계에서는 로컬 탐지기에 가상 사건을 넣은 결과 두 개(121건 제안, 120건·다른 사용자 섞임 관찰)를, 10단계에서는 로그인 없이·가짜 토큰으로 보낸 복구 요청(401 기대), 로컬 정책 사본 검증, 미실행인 B 계정 복구 흐름 세 개를 더 기록합니다(반 엔진 판정 아님). 점검은 모두 20개로 제출 묶음의 상한이라, 10단계에서 같은 단계의 점검 둘씩을 한 줄로 합쳤습니다(5단계 anon 읽기·쓰기 → `anon_original_api_read_write`, 7단계 복합 이상·추가 인증 뒤 재판정 → `decider_step_up_and_verified_retry`, 8단계 모르는 경로·`:id` 자리 기능 이름 → `decider_zone_unknown_route_and_function_segment`). 보내는 요청과 가상 요청은 줄지 않았습니다. 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
    - Git Bash: `SUPABASE_PUBLISHABLE_KEY=<publishable key> npm run bundle`
    - PowerShell: `$env:SUPABASE_PUBLISHABLE_KEY='<publishable key>'; npm run bundle; Remove-Item Env:SUPABASE_PUBLISHABLE_KEY`
@@ -256,7 +295,7 @@
 - **7단계 (저장점 `e757df3`, 보충 `97d06f2`)**: 판정기 규칙 `step_up_required`와 접속 신호 입력 검사. 평소와 다른 시각·처음 보는 네트워크·많은 읽기가 겹친 가상 사건은 `step_up`, 엔진의 추가 인증 뒤에는 다시 판정해 허용합니다. 저장점 뒤에 평소와 다른 시각을 `signals.hour` 0~5시로 바꿨습니다.
 - **8단계 (저장점 `3391c25`, 수정 `810142a`)**: 판정기 구역 규칙 `zone_note_read`·`zone_note_update`·`zone_notice_update`. 정확한 route의 메모 한 건 읽기·수정만 경로상 허용하고, 강사 공지 쓰기(POST·PUT·PATCH·DELETE)는 강사 역할 계약이 없어 항상 거부, 메모 전체 목록과 그 밖의 경로·쿼리 기능·`:id` 자리 기능 이름은 `starter.deny`로 거부합니다. 수정 커밋에서 메모 전체 목록을 거부하고 공지 쓰기 네 메서드를 `zone_notice_update`로 명시했습니다.
 - **9단계 (저장점 `6487932`, 보충 `23fce0d`)**: 탐지기 `src/detect.mjs`. 같은 가명 사용자(`identity.sub`)의 GET이 어느 10분 구간에서든 120건을 넘으면 `propose_revocation`·`burst_read` 제안을 돌려줍니다. 집행은 하지 않습니다. 보충 커밋에서 README에 한계 두 줄(중복 사건, 대문자 GET만)을 더했습니다.
-- **10단계 (이 저장점, 학생 설계·계약에 없음)**: 복구 경로 `POST /api/restores/:id`, 메모 사본·감사 기록 테이블과 내용 해시, 안전 정책 사본 `policy/`, 실제 DB에서 발견한 `authenticated` 권한을 `supabase/policy-restore-db.sql`로 되돌림, 배포 복구 확인 `npm run restore:live-check`.
+- **10단계 (이 저장점, 학생 설계·계약에 없음)**: 복구 경로 `POST /api/restores/:id`, 메모 사본·감사 기록 테이블과 내용 해시, 운영 판정기와 분리된 가상 시험 정책 `policy/test-policy.json`과 안전 사본·manifest(서비스 하나만 복원, 감사 이력 보존), 실제 DB에서 발견한 `authenticated` 권한을 `supabase/policy-restore-db.sql`로 되돌림, 배포 복구 확인 `npm run restore:live-check`.
 
 ## 가상 메모 문장 검색 절차
 
