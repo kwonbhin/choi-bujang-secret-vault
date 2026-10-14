@@ -6,6 +6,7 @@
 // 학생 로그인만 받습니다. 심판 토큰에는 브라우저 기기가 없어 403입니다(심판 기기는 엔진이 판정기에 알림).
 // 승인·취소 경로는 이 앱에 두지 않습니다. 학생이 Supabase SQL Editor에서 직접 합니다(supabase/step11_devices.sql 아래 주석).
 // 개인키는 기기 인증 장치 밖으로 나오지 않고, 질문·공개키·서명·기기 확인 결과는 로그에 남기지 않습니다.
+// 12단계: 응답마다 X-Request-Id와 로그 한 줄, 로그인 확인 직후 회수된 신원 확인(심판 403보다 먼저).
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import config from '../aleph.config.json' with { type: 'json' };
@@ -13,6 +14,8 @@ import { createLoginVerifier } from './verify-login.mjs';
 import { decide as deciderDecide } from './decider.mjs';
 import { WebAuthnError, fromB64url, verifyAssertion, verifyRegistration } from './webauthn.mjs';
 import { createDeviceSigner, supabaseDeviceStore } from './device-gate.mjs';
+import { createIdentityCheck, createIdentityKeyer, guardIdentity, supabaseRevocationStore } from './identity-revocation.mjs';
+import { trackRequest } from './request-id.mjs';
 
 const CHALLENGE_SECONDS = 120;
 const ACTIONS = new Set(['challenge', 'register', 'verify']);
@@ -62,6 +65,7 @@ function loadDeps() {
     verifyLogin: createLoginVerifier({ config, supabaseSecretKey: key }),
     store: supabaseDeviceStore(supabase),
     signer: createDeviceSigner(key),
+    checkIdentity: createIdentityCheck({ keyer: createIdentityKeyer(key), store: supabaseRevocationStore(supabase) }),
     decide: deciderDecide,
     rp: relyingParty(),
     now: () => new Date(),
@@ -164,7 +168,7 @@ const actions = {
 export function createDeviceHandler(getDeps = loadDeps) {
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
-    const send = (status, body) => response.status(status).json(body);
+    const { send } = trackRequest(request, response, '/api/devices/:action');
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
       send(405, { error: 'METHOD_NOT_ALLOWED' });
@@ -190,6 +194,7 @@ export function createDeviceHandler(getDeps = loadDeps) {
       send(401, { error: authorization ? 'INVALID_LOGIN' : 'LOGIN_REQUIRED' });
       return;
     }
+    if (!(await guardIdentity(deps, login, send))) return;
     if (login.kind === 'judge') {
       send(403, { error: 'STUDENT_DEVICE_ONLY' });
       return;

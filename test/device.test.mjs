@@ -16,6 +16,8 @@ const RP = { rpId: 'student-vault.vercel.app', origin: 'https://student-vault.ve
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 const SIGNER = createDeviceSigner('test-only-fake-server-key');
+// 12단계 신원 회수 검사는 test/ops.test.mjs에서 따로 시험합니다. 여기서는 회수되지 않은 신원으로 봅니다.
+const NOT_REVOKED = async () => ({ revoked: false });
 const sha = data => createHash('sha256').update(data).digest();
 const b64 = buf => Buffer.from(buf).toString('base64url');
 
@@ -112,7 +114,7 @@ function world({ decideFn = decide } = {}) {
   const verifyLogin = async header => logins[header] ?? null;
   const decided = [];
   const handler = createDeviceHandler(() => ({
-    verifyLogin, store, signer: SIGNER, rp: RP, now: clock.now,
+    verifyLogin, store, signer: SIGNER, rp: RP, now: clock.now, checkIdentity: NOT_REVOKED,
     decide: async request => { decided.push(request); return decideFn(request); },
   }));
   const checkDevice = createDeviceGate({ signer: SIGNER, store, now: clock.now });
@@ -146,7 +148,7 @@ async function notesCall(w, auth, headers = {}) {
       return q;
     },
   };
-  const handler = createNotesHandler('collection', () => ({ verifyLogin: w.verifyLogin, supabase, sealer: null, checkDevice: w.checkDevice }));
+  const handler = createNotesHandler('collection', () => ({ verifyLogin: w.verifyLogin, supabase, sealer: null, checkDevice: w.checkDevice, checkIdentity: NOT_REVOKED }));
   let status; let json;
   await handler({ method: 'GET', headers: { authorization: auth, ...headers }, query: {} },
     { setHeader() {}, status(code) { status = code; return { json(value) { json = value; } }; } });
@@ -295,7 +297,7 @@ test('심판 토큰은 브라우저 기기 검사를 건너뛰고 기존대로 �
   let called = 0;
   const gate = async (...args) => { called += 1; return w.checkDevice(...args); };
   const supabase = { from: () => { const q = { select: () => q, eq: () => q, order: async () => ({ data: [], error: null }) }; return q; } };
-  const handler = createNotesHandler('collection', () => ({ verifyLogin: w.verifyLogin, supabase, sealer: null, checkDevice: gate }));
+  const handler = createNotesHandler('collection', () => ({ verifyLogin: w.verifyLogin, supabase, sealer: null, checkDevice: gate, checkIdentity: NOT_REVOKED }));
   let status;
   await handler({ method: 'GET', headers: { authorization: 'Bearer judge' }, query: {} },
     { setHeader() {}, status(code) { status = code; return { json() {} }; } });
@@ -310,7 +312,7 @@ test('복구 API도 기기 검사가 먼저: 승인 안 된 학생은 감사 기
   const w = world();
   const touched = [];
   const handler = createRestoreHandler(() => ({
-    verifyLogin: w.verifyLogin, sealer: null, checkDevice: w.checkDevice,
+    verifyLogin: w.verifyLogin, sealer: null, checkDevice: w.checkDevice, checkIdentity: NOT_REVOKED,
     supabase: { from(name) { touched.push(name); throw new Error('읽으면 안 됨'); } },
   }));
   let status; let json;
@@ -320,7 +322,7 @@ test('복구 API도 기기 검사가 먼저: 승인 안 된 학생은 감사 기
   assert.deepEqual(json, { error: 'DEVICE_CHECK_REQUIRED' });
   assert.deepEqual(touched, []);
   // 검사기가 빠진 설정은 자료를 열지 않습니다.
-  const unconfigured = createRestoreHandler(() => ({ verifyLogin: w.verifyLogin, supabase: {}, sealer: null }));
+  const unconfigured = createRestoreHandler(() => ({ verifyLogin: w.verifyLogin, supabase: {}, sealer: null, checkIdentity: NOT_REVOKED }));
   await unconfigured({ method: 'POST', headers: { authorization: 'Bearer a' }, query: { id: randomUUID() }, body: {} },
     { setHeader() {}, status(code) { status = code; return { json(value) { json = value; } }; } });
   assert.deepEqual([status, json.error], [500, 'DEVICE_CHECK_NOT_CONFIGURED']);

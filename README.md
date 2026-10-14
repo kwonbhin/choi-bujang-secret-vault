@@ -1,4 +1,4 @@
-# BYTE BACK 방어전 자료실 (현재 11단계)
+# BYTE BACK 방어전 자료실 (현재 12단계)
 
 1단계 시작 틀 R5로 만든 학생 본인의 자료실입니다. 메모는 모두 실습을 위한 가상 자료입니다. 실제 학생 자료, 비밀번호, 토큰, 서버 전용 키를 코드·Git·제출 묶음에 넣지 마세요.
 
@@ -9,7 +9,7 @@
 
 - 화면 `/`의 로그인·로그아웃은 서버 함수 `/api/auth/*`를 거쳐 Supabase Auth 이메일·비밀번호로 합니다. 회원가입 화면은 없고, 시험 계정은 Supabase 대시보드에서 만듭니다. 화면 코드에는 Supabase 주소·publishable key·supabase-js가 없습니다.
 - 로그인한 사람은 승인된 기기에서 자기 가상 메모만 보고 추가·수정·삭제합니다(11단계). 화면은 access token을 `Authorization: Bearer`로, 기기 확인 결과를 `X-Vault-Device`로 `/api/notes`에 보내고, 로그아웃 상태에서는 "로그인하면 자료가 보입니다."만 보여 줍니다.
-- 메모 API(학생 로그인은 승인된 기기의 기기 확인 결과도 있어야 함. 11단계부터 `allowedRoutes`에는 판정기가 허용하는 `GET`·`PUT /api/notes/:id`와 복구 경로만 둡니다):
+- 메모 API(학생 로그인은 승인된 기기의 기기 확인 결과도 있어야 함. 11단계부터 `allowedRoutes`에는 판정기가 허용하는 `GET`·`PUT /api/notes/:id`와 복구 경로만 두고, 12단계에서 작전실 `GET /api/ops/summary`를 더했습니다):
 
   | 경로 | 동작 |
   |---|---|
@@ -342,6 +342,66 @@
 - 로컬 시험 `npm run test:device`(12개): 승인 전 403·자료 없음, 대기·취소 403, 승인된 기기 정상, 틀린 서명·서버가 낸 적 없는 질문·만료·다시 쓴 질문·다른 출처·rpId·사용자 확인 없음·다른 사람 기기 거부, 판정기가 allow가 아니면 결과 없음, 심판 토큰은 기기 검사 건너뜀, 복구 API도 감사 기록 전에 403, 화면 코드의 저장소·쿠키·서비스 워커 0건, 설치 설정과 아이콘 크기.
 - `npm run restore:live-check`는 B 계정에 승인된 기기가 없으면 메모 목록 단계부터 403입니다. 기기 승인 단계를 거치게 고치는 일은 아직 하지 않았습니다.
 
+## 12단계: 탈환 작전실을 완성합니다
+
+- **탈환 작전실** `GET /api/ops/summary` (`api/ops/summary.js`, `src/ops-api.mjs`), 화면의 「탈환 작전실」 칸.
+  - 로그인한 사람의 본인 범위만 보여 줍니다. 학생은 승인된 기기 확인까지 있어야 하고, 심판 토큰은 기기 검사 없이 받습니다.
+  - 값마다 출처를 붙입니다: `code`(코드 정의값), `server`(이번 요청에서 Supabase를 실제로 읽음), `failed`(조회 실패), `unconnected`(미연결).
+
+  | 묶음 | 항목 | 출처 |
+  |---|---|---|
+  | 판정기 규칙 | `RULE_IDS`, 구역(판정기 `resourceOf`에 경로 모양마다 예시 요청을 넣어 구역 표에 있는 것만) | code |
+  | 탐지 | 규칙(탐지기에 가상 GET 121건·120건을 넣은 결과) | code |
+  | 탐지 | 탐지 사건 | unconnected(반 엔진 사건 전달이 연결되지 않음) |
+  | 회수 상태 | 기기 등록부 pending·approved·revoked 수(심판은 unconnected), 신원 회수 여부와 신원 회수 키 | server |
+  | 복구 버전 | 내 메모 사본 수·봉인 수, 내 마지막 복구 감사 결과(결과·시각), DB 정책 사본 버전(`vault_policy_backup_versions()`) | server(실패 시 failed) |
+  | 복구 버전 | 시험 정책 manifest revision·검증 시각 | code |
+
+  - 메모 제목·본문, 메모 id, 토큰, 키, 원본 사용자 번호는 넣지 않습니다. 신원 회수 키는 원본 ID의 HMAC입니다.
+  - 화면은 응답을 그대로 표로 보여 줄 뿐이고, 화면 문구를 통과 근거로 쓰지 않습니다.
+  - **이 경로는 판정기 구역 표에 없습니다.** 판정기 코드는 바꾸지 않았으므로, 반 엔진을 거치면 판정기가 `starter_not_ready`로 거부합니다. `allowedRoutes`에는 학생 요청대로 더했습니다.
+- **신원 회수** `supabase/step12_revoked_identities.sql` (학생이 SQL Editor에서, **코드 배포 전에** 실행):
+  - `vault_revoked_identities`(identity_key, reason, revoked_at, released_at). RLS를 켜고 외부 권한은 없으며, service_role은 SELECT만 합니다.
+  - 회수·해제는 파일 아래 주석 [목록]·[회수]·[해제] SQL로 SQL Editor에서만 합니다.
+  - 신원 키는 토큰의 사용자 ID(sub)를 서버 전용 키에서 HKDF(라벨 `vault-identity-revocation-v1`)로 뽑은 키로 HMAC-SHA256한 값입니다. 표에는 원본 ID가 남지 않습니다. 회수할 키는 그 신원으로 연 「탈환 작전실」의 "신원 회수 키"에서 봅니다.
+  - 메모·복구·기기·작전실 API는 로그인 확인 직후, 학생·심판 토큰 모두 등록부에 (해제되지 않은 채) 있으면 자료 없이 403 `identity_revoked`로 닫습니다.
+  - 등록부를 못 읽거나 검사기가 없으면 503 `IDENTITY_CHECK_UNAVAILABLE`로 닫습니다(fail-closed). 그래서 SQL보다 코드가 먼저 배포되면 모든 보호 API가 503입니다.
+  - 같은 파일에 `vault_policy_backup_versions()`(security definer, 버전 이름·뜬 시각만, service_role만 실행)를 넣었습니다. 10단계 `vault_policy_backup` 표의 권한은 그대로입니다.
+- **요청 ID** (`src/request-id.mjs`): 메모·복구·기기·작전실 응답마다 서버가 만든 `X-Request-Id`(UUID)를 붙입니다. 같은 ID로 Vercel 함수 로그에 `request {"requestId","method","route","status","code"}` 한 줄을 남깁니다. route는 `/api/notes/:id` 같은 모양이고, 본문·토큰·쿼리·사용자 번호는 남기지 않습니다.
+- **실측 표** `npm run ops:verify` (`scripts/ops-verify.mjs`, 학생이 자기 터미널에서 실행):
+  - 1~12단계의 정상·금지 요청 25줄을 실제 배포에 보내고 `| 단계 | 번호 | 구분 | 요청 | 기대 결과 | 실제 API 결과 | 일치 | 요청 ID | 확인 시각 | 비고 |` 표를 출력합니다. `artifacts/ops-verify-result.json`(Git 제외)에도 저장합니다.
+  - 로그인 없이 보낼 수 있는 줄만 보냅니다. `-- --login`을 붙이면 B 이메일·비밀번호를 물어(메모리에만) 로그인·기기 확인 없는 403 줄도 보냅니다.
+  - 패스키 기기 승인이 필요한 정상 줄, publishable key가 필요한 줄, 반 엔진을 거치는 판정기·탐지기 줄(6~9단계)은 보내지 않고 "미실행"과 이유를 적습니다. 6~9단계 비고에는 로컬 판정기·탐지기 결과(요청 아님)만 적습니다.
+  - 일치는 실제 상태·오류 코드가 기대와 같을 때만입니다. 심판의 41종 시험을 대신하거나 통과로 처리하지 않습니다.
+  - 절차: ① `/aleph.json`의 commit이 검사할 커밋인지 확인 → ② `npm run ops:verify` → ③ 필요하면 `npm run ops:verify -- --login` → ④ 화면에서 승인된 기기로 정상 줄(S4-1·S10-3·S11-5)을 직접 확인하고, 그 결과는 표에 손으로 고쳐 넣지 않고 따로 적습니다.
+- **제출 점검** (`src/attack-check.mjs`, step 12): 다른 저장소가 `S12_BUNDLE_UNSUPPORTED`를 받은 기록이 있어 이렇게 바꿨습니다.
+  - 배포 주소에 GET·HEAD 요청만, 점검마다 정확히 한 번, 정해진 순서로 보냅니다.
+  - fetch 옵션에 `alephEvidence: { caseId: attackId, requestKey: 새 UUID }`를 붙입니다(헤더·주소·본문에는 넣지 않음). observed는 `HTTP <상태> …`로 시작합니다.
+  - 점검은 19개입니다(공개 화면·data.json·aleph.json·manifest, 로그인 없음·가짜 토큰의 메모 목록·한 건·작전실, HEAD 목록, 복구·기기·토큰 갱신 경로의 GET, 없는 경로, anon 원본 API GET).
+  - POST가 필요한 점검(로그인 없는 복구, anon 원본 쓰기)과 반 엔진 몫(릴레이 차단)은 요청 없이 "미실행"으로 적습니다.
+  - 판정기·탐지기·정책 사본의 로컬 결과는 요청이 아니어서 12단계 제출 점검에서 뺐습니다(`npm run ops:verify` 비고와 작전실 응답에 있음). 11단계까지의 점검 코드는 그대로입니다.
+- **허용 경로**: `allowedRoutes` = `GET /api/notes/:id`, `PUT /api/notes/:id`, `POST /api/notes/:id/restore`, `GET /api/ops/summary`. step은 12입니다.
+- 로컬 시험 `npm run test:ops`(7개): 작전실 본인 범위·본문 없음·출처 구분·조회 실패·심판, 신원 회수(학생·심판 × 메모·복구·기기·작전실 403, 해제된 행은 통과, 등록부 실패·검사기 없음 503), 요청 ID 헤더와 로그 한 줄, 제출 점검의 GET·HEAD·순서·alephEvidence, 실측 표의 미실행 처리.
+- **학생이 할 일 순서**
+  1. SQL Editor에서 `supabase/step12_revoked_identities.sql` 실행(마지막 표 기대값 확인).
+  2. push → `/aleph.json` step 12·commit 확인.
+  3. 승인된 기기에서 로그인 → 「작전실 불러오기」.
+  4. `npm run ops:verify`.
+  5. (선택) 회수 시험: B의 "신원 회수 키"로 [회수] → B의 모든 보호 요청 403 `identity_revoked` → [해제]로 되돌림.
+
+## 운영 안내: 설치·실행·중지·복구 (12단계 저장점 커밋 기준)
+
+학생 작업과 제공 엔진을 나눠 적습니다.
+- **ALEPH SDP 엔진(제공)**: 신원·기기·경로를 확인하고 판정기 `decide()`를 부르며, 재인증·자료 차단·접속 회수를 집행합니다. 이 저장소에 없고 학생이 설치·중지하지 않습니다.
+- 아래 네 가지는 학생 작업입니다. 명령은 이 커밋에서 로컬로 실행해 확인했고, Vercel·Supabase 쪽 단계는 학생이 직접 합니다. 비밀값은 Vercel·Supabase 설정 화면의 비밀 입력란에만 넣습니다.
+
+| 구성 | 설치 | 실행 | 중지 | 복구 |
+|---|---|---|---|---|
+| 학생 판정기 `src/decider.mjs` | 저장소를 받아 `npm ci`. 계약은 `docs/DECIDER_REQUEST.md` | ALEPH SDP 엔진(제공)이 요청마다 `decide()`를 부름. 로컬 연습: `npm run decider:test`, `npm run fixture:7` | 학생 쪽 중지 스위치는 없음. 계약상 엔진은 늦거나 형식이 틀린 응답을 허용하지 않으므로, 판정기가 멈추면 요청은 열리지 않음 | `npm run policy:diff`로 안전 사본과 비교. 시험 정책 복원은 `npm run policy:restore -- --service <이름> --confirm`. 운영 판정기는 Git의 이전 판정 커밋을 새 커밋으로 되돌림(`git reset --hard`는 쓰지 않음) |
+| 탐지 규칙 `src/detect.mjs` | 판정기와 같음. 계약은 `docs/DETECT_EVENTS.md` | 로컬 `npm run detect:test`. 운영 사건 전달·회수 집행은 ALEPH SDP 엔진(제공) 몫이고 이 앱과 연결되지 않음 | 연결되지 않아 중지할 운영 프로세스가 없음 | Git의 이전 커밋으로 되돌림. 탐지 제안 뒤 실제 회수는 아래 자료실의 [회수] SQL로 학생이 직접 |
+| 접속 앱(`public/`, `/api/devices/*`) | 배포 주소에서 브라우저의 "앱 설치". 기기는 「이 기기 승인 요청」 → SQL Editor [승인](`step11_devices.sql` 주석) | 앱을 열고 로그인 → 「승인 상태 다시 확인」 → 30분 기기 확인 결과 | 로그아웃하거나 창을 닫으면 메모리의 토큰·결과가 사라짐. 기기를 막으려면 SQL Editor [취소] | 취소한 기기는 다시 승인할 수 없어 새로 승인 요청 → [승인]. 토큰은 저장하지 않으므로 다시 로그인 |
+| 자료실(`api/`, Supabase) | 「다시 실행하는 방법」의 SQL 순서(13·14번 포함) → Vercel 환경변수 `SUPABASE_URL`·`SUPABASE_SECRET_KEY`·`SUPABASE_PUBLISHABLE_KEY`(값은 Vercel 설정 화면에만) → push | Vercel이 `npm run build`로 배포. `/aleph.json`의 step·commit 확인, `npm run ops:verify` | 특정 신원: SQL Editor [회수](`step12_revoked_identities.sql` 주석) → 다음 요청부터 403. 배포 전체: Vercel 대시보드에서 이전 정상 배포로 되돌림(학생 자료는 지우지 않음) | 메모 한 건: `POST /api/notes/:id/restore`(먼저 `dryRun`). DB 안전 정책: `step10_policy_backup.sql`의 복원 함수. 신원: [해제]. 배포: Vercel의 이전 배포 또는 Git 새 커밋 |
+
 ## 남은 약점과 한계
 
 - **POST 409로 id 사용 여부가 드러납니다.** 이미 있는 id로 POST하면 남의 메모여도 409 `NOTE_ID_TAKEN`입니다. 내용은 드러나지 않지만 그 id가 쓰이고 있다는 사실은 알 수 있습니다. 클라이언트가 id를 정하는 `POST {id,…}` 형식을 유지해서 남긴 한계입니다.
@@ -456,11 +516,12 @@
    | 11 | `supabase/step10_policy_restore_test.sql` | 10단계 침공 흉내 → 미리보기 → 복원 → 확인(실패하면 전부 취소) | 있음 |
    | 12 | `supabase/step10_backup_seal.sql` | 10단계 사본 봉인 표·권한·수정 막는 트리거(코드 배포 전에 실행) | 있음 |
    | 13 | `supabase/step11_devices.sql` | 11단계 기기 등록부·질문 표·권한·트리거(코드 배포 전에 실행). 승인·취소는 파일 아래 주석 SQL | 있음 |
+   | 14 | `supabase/step12_revoked_identities.sql` | 12단계 회수된 신원 등록부·정책 사본 버전 읽기 함수(코드 배포 전에 반드시 실행, 없으면 보호 API 503). 회수·해제는 파일 아래 주석 SQL | 있음 |
 
    `*.local.sql`이 없으면 3·4번 대신 화면에서 로그인해 메모를 추가합니다. 대조 조회가 있는 파일은 구역 [1]·[2]·[3]을 각각 선택해 실행하면 적용 전후 권한을 비교할 수 있습니다.
 2. Vercel 환경변수 `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`를 Vercel 설정 화면에 직접 넣습니다.
 3. `main`에 push하면 Vercel이 배포합니다. `/aleph.json`의 `step`과 `commit`으로 배포된 커밋을 확인합니다.
-4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`, `npm run detect:test`, `npm run test:restore`, `npm run test:policy`, `npm run test:device`, `npm run policy:diff`. 배포된 복구 확인은 자기 터미널에서 `npm run restore:live-check`(B 계정 필요). 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
+4. 로컬 확인: `npm ci` 뒤 `npm run build -- --local`, `npm run test:r5`, `npm run test:package`, `npm run decider:test`, `npm run fixture:7`, `npm run detect:test`, `npm run test:restore`, `npm run test:policy`, `npm run test:device`, `npm run test:ops`, `npm run policy:diff`. 배포 실측 표는 `npm run ops:verify`. 배포된 복구 확인은 자기 터미널에서 `npm run restore:live-check`(B 계정 필요). 로컬 실행은 Vercel 배포나 심판 판정을 증명하지 않습니다.
 5. 제출 묶음: `bundle-notes.json`(커밋하지 않음)에 이번 단계 설명을 적고 `npm run bundle`을 실행하면 `artifacts/submission.json`이 생깁니다. `src/attack-check.mjs`가 배포 주소와 `originalApiUrl`로 실제 보낸 요청 결과만 기록하며, 학생 자기 점검이지 심판 판정이 아닙니다. 6단계에서는 5단계 점검 다섯 개에 더해, 로컬 `src/decider.mjs`에 등록·미등록 기기 가상 요청을 넣은 실제 응답 두 개를, 7단계에서는 복합 이상·추가 인증 뒤 재판정·위조 출처 신호의 응답 세 개와 미실행인 실제 자료 차단 한 개를, 8단계에서는 메모 수정·공지 수정·모르는 경로·쿼리 기능·`:id` 자리 기능 이름·메모 전체 목록·공지 삭제의 응답 일곱 개를, 9단계에서는 로컬 탐지기에 가상 사건을 넣은 결과 두 개(121건 제안, 120건·다른 사용자 섞임 관찰)를, 10단계에서는 로그인 없이·가짜 토큰으로 보낸 복구 요청(401 기대), 로컬 정책 사본 검증, 미실행인 B 계정 복구 흐름 세 개를 더 기록합니다(반 엔진 판정 아님). 점검은 모두 20개로 제출 묶음의 상한이라, 10단계에서 같은 단계의 점검 둘씩을 한 줄로 합쳤습니다(5단계 anon 읽기·쓰기 → `anon_original_api_read_write`, 7단계 복합 이상·추가 인증 뒤 재판정 → `decider_step_up_and_verified_retry`, 8단계 모르는 경로·`:id` 자리 기능 이름 → `decider_zone_unknown_route_and_function_segment`). 보내는 요청과 가상 요청은 줄지 않았습니다. 시험 계정 비밀번호가 필요한 점검은 넣지 않았습니다. anon 점검의 publishable key는 파일에 저장하지 않고 실행 명령에서만 넘깁니다. 키를 넘기지 않으면 그 두 점검은 "미실행"으로 기록됩니다.
    - Git Bash: `SUPABASE_PUBLISHABLE_KEY=<publishable key> npm run bundle`
    - PowerShell: `$env:SUPABASE_PUBLISHABLE_KEY='<publishable key>'; npm run bundle; Remove-Item Env:SUPABASE_PUBLISHABLE_KEY`
@@ -479,7 +540,8 @@
 - **9단계 (저장점 `6487932`, 보충 `23fce0d`)**: 탐지기 `src/detect.mjs`. 같은 가명 사용자(`identity.sub`)의 GET이 어느 10분 구간에서든 120건을 넘으면 `propose_revocation`·`burst_read` 제안을 돌려줍니다. 집행은 하지 않습니다. 보충 커밋에서 README에 한계 두 줄(중복 사건, 대문자 GET만)을 더했습니다.
 - **10단계 (`7f2ee7b`, `f8f7dfd`, `4b7e15d`, 사본 봉인 `c7d8cb1`, 학생 설계·계약에 없음)**: 복구 경로 `POST /api/notes/:id/restore`와 판정기 `zone_note_restore`·`restore_verified_policy`(정책 버전 1), DB 안전 정책(RLS·권한) 사본·검증·복원 SQL, 메모 사본·감사 기록 테이블과 내용 해시, 판정기 경로 규칙 연습용 가상 시험 정책 `policy/test-policy.json`과 안전 사본·manifest(서비스 하나만 복원, 감사 이력 보존), 실제 DB에서 발견한 `authenticated` 권한을 `supabase/policy-restore-db.sql`로 되돌림, 배포 복구 확인 `npm run restore:live-check`. `c7d8cb1`에서 사본 봉인(서버 키 HMAC)을 더했습니다.
 - **보너스 (`bd309b4` xdr-03, `3b76266` xdr-04, `4e4f6db` xdr-05, `e5f3ab4` xdr-06)**: `xdr/known-cve`, `xdr/persistence`, `xdr/privilege`, `xdr/exfiltration` 경보 판단. 판정기에는 연결하지 않았습니다.
-- **11단계 (이 저장점, 학생 설계)**: 설치형 웹앱 설정(서비스 워커 없음), 화면의 기기 승인 상태·오프라인 안내, 패스키 기기 등록부 `supabase/step11_devices.sql`과 `POST /api/devices/:action`, 판정기 `decide()` allow일 때만 주는 30분 기기 확인 결과, 보호 자료 API의 기기 검사(심판 토큰 제외), 토큰을 메모리에만 두기(refresh 쿠키 제거), `allowedRoutes`를 판정기 허용 경로 3개로 맞춤.
+- **11단계 (저장점 `6b4f0ea`, 학생 설계)**: 설치형 웹앱 설정(서비스 워커 없음), 화면의 기기 승인 상태·오프라인 안내, 패스키 기기 등록부 `supabase/step11_devices.sql`과 `POST /api/devices/:action`, 판정기 `decide()` allow일 때만 주는 30분 기기 확인 결과, 보호 자료 API의 기기 검사(심판 토큰 제외), 토큰을 메모리에만 두기(refresh 쿠키 제거), `allowedRoutes`를 판정기 허용 경로 3개로 맞춤.
+- **12단계 (이 저장점, 학생 설계)**: 탈환 작전실 `GET /api/ops/summary`(본인 범위, 값마다 출처)와 화면 칸, 회수된 신원 등록부 `supabase/step12_revoked_identities.sql`과 보호 API의 신원 회수 403·등록부 실패 503, 보호 API 응답의 `X-Request-Id`와 로그 한 줄, 실측 표 `npm run ops:verify`, 12단계 제출 점검을 GET·HEAD·점검마다 한 번·`alephEvidence`로 정리, `allowedRoutes`에 작전실 추가, 운영 안내(설치·실행·중지·복구).
 
 ## 가상 메모 문장 검색 절차
 

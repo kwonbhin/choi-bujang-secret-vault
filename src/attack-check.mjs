@@ -102,8 +102,109 @@ async function keyLeak(responses) {
   return false;
 }
 
+// 12단계 점검: 배포 주소에 GET·HEAD 요청만 보내고, 점검마다 요청은 정확히 한 번, 아래 표의 순서대로 보냅니다.
+// fetch 옵션에 alephEvidence { caseId: attackId, requestKey: 새 UUID }를 붙입니다(헤더·주소·본문에는 넣지 않음).
+// observed는 "HTTP <상태> …"로 시작합니다. POST가 꼭 필요한 점검과 반 엔진이 맡는 점검은 요청 없이 "미실행"으로 적습니다.
+// 판정기·탐지기·정책 사본의 로컬 결과는 요청이 아니어서 이 표에 넣지 않습니다(npm run ops:verify의 로컬 표와 작전실 응답).
+const READ_METHODS = new Set(['GET', 'HEAD']);
+async function probe(target, attackId, { method = 'GET', headers } = {}) {
+  if (!READ_METHODS.has(method)) throw new Error(`12단계 점검은 GET·HEAD만 보냅니다: ${method}`);
+  const { randomUUID } = await import('node:crypto');
+  const init = { method, redirect: 'error', signal: AbortSignal.timeout(10000),
+    alephEvidence: { caseId: attackId, requestKey: randomUUID() } };
+  if (headers) init.headers = headers;
+  return fetch(target, init);
+}
+async function jsonOf(response) {
+  try { return await response.clone().json(); } catch { return undefined; }
+}
+const requestIdNote = response => `X-Request-Id ${response.headers.get('x-request-id') ? '있음' : '없음'}`;
+async function apiNote(response) {
+  const data = await jsonOf(response);
+  const error = typeof data?.error === 'string' ? `오류 ${data.error.slice(0, 40)}` : data === undefined ? 'JSON 아님' : 'JSON(오류 문구 없음)';
+  return `HTTP ${response.status}, ${error}, 메모 ${await noteCount(response)}건, ${requestIdNote(response)}`;
+}
+
+export function stage12Plan(config, { head = null } = {}) {
+  const forged = { Authorization: `Bearer ${forgedToken(config)}` };
+  const id = '00000000-0000-4000-8000-000000000012';
+  const SEED_SENTENCE = /\uC2E4\uC2B5\uC6A9 \uAC00\uC0C1/gu;
+  return [
+    { attackId: 'public_page_key_scan', expected: '첫 화면 GET /는 200이고 sb_publishable_·sb_secret_·시드 메모 문장이 0건', path: '/',
+      observe: async r => { const t = await r.text().catch(() => '');
+        return `HTTP ${r.status}, sb_publishable_ ${t.match(/sb_publishable_/gu)?.length ?? 0}건, sb_secret_ ${t.match(/sb_secret_/gu)?.length ?? 0}건, 시드 메모 문장 ${t.match(SEED_SENTENCE)?.length ?? 0}건`; } },
+    { attackId: 'public_data_file', expected: '공개 GET /data.json은 404이고 메모가 없음', path: '/data.json',
+      observe: async r => `HTTP ${r.status}, 메모 ${await noteCount(r)}건` },
+    { attackId: 'deployment_identity', expected: 'GET /aleph.json은 200, step 12, commit이 검사한 커밋(HEAD)과 같음', path: '/aleph.json',
+      observe: async r => { const d = await jsonOf(r);
+        const commit = typeof d?.commit === 'string' ? d.commit : '';
+        return `HTTP ${r.status}, step ${d?.step ?? '없음'}, commit ${commit.slice(0, 7) || '없음'}${head ? (commit === head ? ' (HEAD와 같음)' : ` (HEAD ${head.slice(0, 7)}와 다름)`) : ''}`; } },
+    { attackId: 'app_manifest', expected: 'GET /manifest.webmanifest는 200, display standalone, 아이콘 192·512', path: '/manifest.webmanifest',
+      observe: async r => { const d = await jsonOf(r);
+        return `HTTP ${r.status}, display ${d?.display ?? '없음'}, 아이콘 ${Array.isArray(d?.icons) ? d.icons.map(i => i?.sizes).join('·') : '없음'}`; } },
+    { attackId: 'anonymous_api_list', expected: '로그인 없이 GET /api/notes는 401 JSON이고 메모 없음, 요청 ID 있음', path: '/api/notes', observe: apiNote },
+    { attackId: 'forged_token_read', expected: '서명 없는 가짜 토큰으로 GET /api/notes는 401 JSON', path: '/api/notes', headers: forged, observe: apiNote },
+    { attackId: 'anonymous_note_read', expected: '로그인 없이 GET /api/notes/:id는 401 JSON이고 메모 없음', path: `/api/notes/${id}`, observe: apiNote },
+    { attackId: 'forged_note_read', expected: '가짜 토큰으로 GET /api/notes/:id는 401 JSON', path: `/api/notes/${id}`, headers: forged, observe: apiNote },
+    { attackId: 'head_note_list', expected: 'HEAD /api/notes는 자료 없이 거부(405 Allow GET, POST)', path: '/api/notes', method: 'HEAD',
+      observe: async r => `HTTP ${r.status}, Allow ${r.headers.get('allow') ?? '없음'}, 본문 ${(await r.text().catch(() => '')).length}바이트, ${requestIdNote(r)}` },
+    { attackId: 'restore_get_method', expected: '복구 경로는 GET으로 실행되지 않음(405 Allow POST, 자료 없음)', path: `/api/notes/${id}/restore`,
+      observe: async r => `${await apiNote(r)}, Allow ${r.headers.get('allow') ?? '없음'}` },
+    { attackId: 'restore_post_without_login', expected: '로그인 없이 POST /api/notes/:id/restore는 401',
+      notRun: '미실행: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음. 로컬 npm run test:restore와 npm run ops:verify로 확인' },
+    { attackId: 'device_route_get', expected: '기기 승인 경로는 GET으로 열리지 않음(405 Allow POST)', path: '/api/devices/verify',
+      observe: async r => `${await apiNote(r)}, Allow ${r.headers.get('allow') ?? '없음'}` },
+    { attackId: 'anonymous_ops_summary', expected: '로그인 없이 GET /api/ops/summary는 401 JSON이고 요약 없음', path: '/api/ops/summary', observe: apiNote },
+    { attackId: 'forged_ops_summary', expected: '가짜 토큰으로 GET /api/ops/summary는 401 JSON', path: '/api/ops/summary', headers: forged, observe: apiNote },
+    { attackId: 'auth_refresh_get', expected: '토큰 갱신 경로는 GET으로 열리지 않음(405)', path: '/api/auth/refresh',
+      observe: async r => `HTTP ${r.status}, ${(await jsonOf(r))?.error ?? '오류 문구 없음'}` },
+    { attackId: 'unknown_api_route', expected: '없는 기능 경로 GET /api/notes/:id/export는 자료 없이 404', path: `/api/notes/${id}/export`,
+      observe: async r => `HTTP ${r.status}, 메모 ${await noteCount(r)}건` },
+    { attackId: 'anon_original_api_read', expected: 'anon 키로 originalApiUrl GET이 권한 없음(42501)으로 거부됨', original: true },
+    { attackId: 'anon_original_api_write', expected: 'anon 키로 originalApiUrl 쓰기가 권한 없음(42501)으로 거부됨',
+      notRun: '미실행: POST가 필요해 12단계 제출 점검(GET·HEAD만)에서는 보내지 않음' },
+    { attackId: 'relay_step_up_data_block', expected: '실제 릴레이가 추가 확인 전 자료를 막고 재로그인 뒤 다시 판정함',
+      notRun: '미실행: 실제 재로그인·자료 차단은 ALEPH SDP 엔진(제공)이 맡고, 이 저장소의 api/는 판정기를 부르지 않아 학생이 직접 보낼 수 없음' },
+  ];
+}
+
+async function stage12Checks(config, app) {
+  let head = null;
+  try {
+    const { execFileSync } = await import('node:child_process');
+    head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', windowsHide: true }).trim();
+  } catch { /* 커밋을 모르면 비교하지 않습니다. */ }
+  const checks = [];
+  for (const item of stage12Plan(config, { head })) {
+    const { attackId, expected } = item;
+    if (item.notRun) { checks.push({ attackId, expected, observed: item.notRun }); continue; }
+    if (item.original) {
+      // anon 키는 bundle을 실행하는 명령의 환경변수로만 받습니다. 없으면 요청하지 않고 미실행입니다.
+      const publishable = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+      if (!publishable || !config.originalApiUrl) {
+        checks.push({ attackId, expected, observed: '미실행: 실행 명령에 SUPABASE_PUBLISHABLE_KEY 환경변수가 없어 보내지 않음' });
+        continue;
+      }
+      const r = await probe(new URL(config.originalApiUrl), attackId, { headers: { apikey: publishable } });
+      const d = await jsonOf(r);
+      checks.push({ attackId, expected, observed: `HTTP ${r.status}, 코드 ${typeof d?.code === 'string' ? d.code.slice(0, 20) : '없음'}, 행 ${Array.isArray(d) ? d.length : 0}개` });
+      continue;
+    }
+    let observed;
+    try {
+      const response = await probe(new URL(item.path, app), attackId, { method: item.method, headers: item.headers });
+      observed = await item.observe(response);
+    } catch (error) {
+      observed = `요청 실패: ${String(error?.name ?? 'Error').slice(0, 40)}`;
+    }
+    checks.push({ attackId, expected, observed: observed.slice(0, 300) });
+  }
+  return checks;
+}
+
 export async function runAttackChecks(config) {
   const app = appUrl(config);
+  if (config.step === 12) return stage12Checks(config, app);
   if (config.step === 1) {
     if (typeof config.sampleMarker !== 'string' || !config.sampleMarker) throw new Error('가상 메모의 확인 표시를 넣어 주세요.');
     const response = await get(app, '/data.json');

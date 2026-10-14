@@ -40,12 +40,17 @@
     .device-state[data-state="pending"] { border-color: #e0b25a; color: #ffeac2; }
     .device-state[data-state="denied"] { border-color: #d07384; color: #ffe3e8; }
     .small { font-size: 14px; margin: 6px 0 0; }
+    .ops dl { display: grid; grid-template-columns: minmax(120px, 34%) 1fr; gap: 6px 12px; margin: 10px 0 0; font-size: 14px; }
+    .ops dt { color: #8ad8df; overflow-wrap: anywhere; }
+    .ops dd { margin: 0; color: #ecf4ff; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .ops h3 { margin: 14px 0 0; font-size: 16px; }
+    .source { display: inline-block; margin-right: 6px; padding: 0 6px; border: 1px solid #51667c; border-radius: 6px; color: #bfd0e5; font-size: 12px; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <main>
-    <div class="eyebrow">BYTE BACK · 11단계 나만의 접속 앱을 완성합니다</div>
+    <div class="eyebrow">BYTE BACK · 12단계 탈환 작전실을 완성합니다</div>
     <h1>점령된 자료실</h1>
     <p class="offline" id="offline" role="status" hidden>오프라인입니다. 이 앱은 자료를 기기에 저장하지 않아 연결이 돌아오면 서버에서 다시 불러옵니다.</p>
     <p>로그인한 계정은 승인된 기기에서 자기 자료만 보고 고칠 수 있습니다. 아래 기록은 모두 실습을 위해 만든 가상 자료입니다.</p>
@@ -73,6 +78,13 @@
         <button id="device-verify" class="secondary" type="button">승인 상태 다시 확인</button>
       </div>
       <p class="small" id="install-mode"></p>
+    </section>
+    <section class="auth ops" id="ops" aria-labelledby="ops-title" hidden>
+      <h2 id="ops-title">탈환 작전실</h2>
+      <p class="small">서버 GET /api/ops/summary 응답만 그대로 보여 줍니다. 값마다 출처(코드 정의값·서버 조회값·조회 실패·미연결)가 붙고, 이 화면은 통과 근거가 아닙니다.</p>
+      <div class="actions"><button id="ops-load" class="secondary" type="button">작전실 불러오기</button></div>
+      <p class="auth-error" id="ops-error" role="alert" hidden></p>
+      <div id="ops-body"></div>
     </section>
     <section class="auth" id="editor" aria-labelledby="editor-title" hidden>
       <h2 id="editor-title">가상 메모 추가</h2>
@@ -119,6 +131,10 @@
     const deviceRegister = document.querySelector('#device-register');
     const deviceVerify = document.querySelector('#device-verify');
     const installMode = document.querySelector('#install-mode');
+    const opsSection = document.querySelector('#ops');
+    const opsLoad = document.querySelector('#ops-load');
+    const opsError = document.querySelector('#ops-error');
+    const opsBody = document.querySelector('#ops-body');
 
     // { access_token, refresh_token, expires_at, user: { email } } 또는 null. 메모리에만 둡니다.
     let currentSession = null;
@@ -200,6 +216,7 @@
         showDevice('unknown', '서버가 이 기기의 승인을 확인하지 못했습니다. 「승인 상태 다시 확인」을 눌러 주세요.');
         throw new Error('승인된 기기에서만 자료가 보입니다.');
       }
+      if (response.status === 403 && data?.error === 'identity_revoked') throw new Error('이 신원은 회수되어 자료를 열 수 없습니다.');
       if (response.status === 403) throw new Error('이 요청은 허용되지 않았습니다.');
       if (response.status === 404) throw new Error('메모를 찾지 못했습니다. 이미 지워졌을 수 있습니다.');
       if (response.status === 400) throw new Error('제목은 1~200자, 내용은 10000자 이하로 적어 주세요.');
@@ -259,6 +276,8 @@
       const current = ++notesRequest;
       editor.hidden = !currentSession || !deviceCheck;
       deviceSection.hidden = !currentSession;
+      opsSection.hidden = !currentSession;
+      if (!currentSession) opsBody.replaceChildren();
       if (!currentSession) {
         resetEditor();
         showNoteError('');
@@ -301,6 +320,53 @@
     noteCancel.addEventListener('click', () => {
       resetEditor();
       showNoteError('');
+    });
+
+    // ── 탈환 작전실: 서버 응답을 그대로 표로 보여 줍니다(화면에서 값을 만들거나 판정하지 않음) ──
+    const SOURCE_LABELS = { code: '코드 정의값', server: '서버 조회값', failed: '조회 실패', unconnected: '미연결' };
+    const OPS_GROUPS = [['viewer', '보는 사람'], ['decider', '판정기 규칙'], ['detection', '탐지'], ['revocation', '회수 상태'], ['restore', '복구 버전']];
+    const opsText = value => (value === null || value === undefined ? '값 없음'
+      : typeof value === 'object' ? JSON.stringify(value, null, 1) : String(value));
+    const opsRow = (list, name, item) => {
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      const badge = document.createElement('span');
+      dt.textContent = name;
+      badge.className = 'source';
+      badge.textContent = SOURCE_LABELS[item?.source] ?? '출처 없음';
+      dd.append(badge, document.createTextNode(opsText(item?.value) + (item?.note ? `\n${item.note}` : '')));
+      list.append(dt, dd);
+    };
+    const renderOps = data => {
+      const parts = [];
+      const head = document.createElement('p');
+      head.className = 'small';
+      head.textContent = `요청 ID ${data?.requestId ?? '없음'} · 만든 시각 ${data?.generatedAt ?? '없음'} · ${data?.notice ?? ''}`;
+      parts.push(head);
+      for (const [key, title] of OPS_GROUPS) {
+        const group = data?.[key];
+        if (!group) continue;
+        const h = document.createElement('h3');
+        h.textContent = title;
+        const list = document.createElement('dl');
+        if (typeof group.source === 'string') opsRow(list, key, group);
+        else for (const [name, item] of Object.entries(group)) opsRow(list, name, item);
+        parts.push(h, list);
+      }
+      opsBody.replaceChildren(...parts);
+    };
+    opsLoad.addEventListener('click', async () => {
+      opsError.hidden = true;
+      opsLoad.disabled = true;
+      try {
+        renderOps(await api('/api/ops/summary'));
+      } catch (error) {
+        opsBody.replaceChildren();
+        opsError.textContent = `작전실을 불러오지 못했습니다: ${error.message}`;
+        opsError.hidden = false;
+      } finally {
+        opsLoad.disabled = false;
+      }
     });
 
     // ── 기기 승인(패스키) ──────────────────────────────────────────────

@@ -5,6 +5,8 @@
 // 4단계 소유자 검사: 모든 읽기·수정·삭제 조회에 owner_id = 검사된 userId 조건을 함께 겁니다.
 // 11단계 기기 검사: 학생 로그인이면 로그인 확인 뒤, 자료를 읽거나 쓰기 전에 기기 확인 결과와 등록부를 다시 확인합니다
 // (src/device-gate.mjs). 없거나 승인 아님이면 자료 없이 403입니다. 심판 토큰에는 이 브라우저 기기 검사를 걸지 않습니다.
+// 12단계: 응답마다 X-Request-Id를 붙이고 로그 한 줄을 남깁니다(src/request-id.mjs). 로그인 확인 직후 학생·심판 모두
+// 회수된 신원 등록부를 확인해 회수됐으면 403 identity_revoked, 등록부를 못 읽으면 503입니다(src/identity-revocation.mjs).
 // 남의 메모와 없는 메모는 같은 404 NOTE_NOT_FOUND로 답해 있는지 없는지 드러내지 않습니다.
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -12,6 +14,8 @@ import config from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from './verify-login.mjs';
 import { createSealer, sealNewNote } from './backup-seal.mjs';
 import { createDeviceGate, createDeviceSigner, guardDevice, supabaseDeviceStore } from './device-gate.mjs';
+import { createIdentityCheck, createIdentityKeyer, guardIdentity, supabaseRevocationStore } from './identity-revocation.mjs';
+import { trackRequest } from './request-id.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const TITLE_MAX = 200;
@@ -35,6 +39,7 @@ function loadDeps() {
     supabase,
     sealer: createSealer(key),
     checkDevice: createDeviceGate({ signer: createDeviceSigner(key), store: supabaseDeviceStore(supabase) }),
+    checkIdentity: createIdentityCheck({ keyer: createIdentityKeyer(key), store: supabaseRevocationStore(supabase) }),
   };
   return cached;
 }
@@ -134,7 +139,7 @@ export function createNotesHandler(route, getDeps = loadDeps) {
   const routes = route === 'item' ? item : collection;
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
-    const send = (status, body) => response.status(status).json(body);
+    const { send } = trackRequest(request, response, route === 'item' ? '/api/notes/:id' : '/api/notes');
     if (!routes.methods.includes(request.method)) {
       response.setHeader('Allow', routes.methods.join(', '));
       send(405, { error: 'METHOD_NOT_ALLOWED' });
@@ -155,6 +160,7 @@ export function createNotesHandler(route, getDeps = loadDeps) {
       send(401, { error: authorization ? 'INVALID_LOGIN' : 'LOGIN_REQUIRED' });
       return;
     }
+    if (!(await guardIdentity(deps, login, send))) return;
     if (!(await guardDevice(deps, login, request, send))) return;
     const id = route === 'item' ? request.query?.id : undefined;
     if (route === 'item' && (typeof id !== 'string' || !UUID.test(id))) {

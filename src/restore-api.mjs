@@ -3,6 +3,7 @@
 // 판정기를 거치지 않는 직접 호출도 있으므로 소유자·사본 검증은 이 함수가 다시 맡습니다.
 // - 11단계 기기 검사: 학생 로그인이면 로그인 확인 바로 뒤, 감사 기록·메모·사본을 건드리기 전에 기기 확인 결과와
 //   등록부를 다시 확인하고(src/device-gate.mjs), 없거나 승인 아님이면 403입니다. 심판 토큰에는 걸지 않습니다.
+// - 12단계: 응답마다 X-Request-Id와 로그 한 줄, 로그인 확인 직후 회수된 신원 확인(회수 403 identity_revoked, 등록부 실패 503).
 // - 로그인 필수: 사용자는 src/verify-login.mjs가 검사한 토큰의 userId로만 정합니다.
 //   URL·본문·쿼리의 owner_id는 읽지 않습니다. 본문과 쿼리에서는 dryRun·preview만 읽습니다.
 // - 사본(vault_notes_snapshot)의 owner_id가 로그인 사용자이고, 지금 메모 행이 있으면 그 owner_id도
@@ -28,6 +29,8 @@ import { noteSha256 } from './content-hash.mjs';
 import { createLoginVerifier } from './verify-login.mjs';
 import { SEAL_TABLE, createSealer } from './backup-seal.mjs';
 import { createDeviceGate, createDeviceSigner, guardDevice, supabaseDeviceStore } from './device-gate.mjs';
+import { createIdentityCheck, createIdentityKeyer, guardIdentity, supabaseRevocationStore } from './identity-revocation.mjs';
+import { trackRequest } from './request-id.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const NOTES = 'vault_notes';
@@ -61,6 +64,7 @@ function loadDeps() {
     supabase,
     sealer: createSealer(key),
     checkDevice: createDeviceGate({ signer: createDeviceSigner(key), store: supabaseDeviceStore(supabase) }),
+    checkIdentity: createIdentityCheck({ keyer: createIdentityKeyer(key), store: supabaseRevocationStore(supabase) }),
   };
   return cached;
 }
@@ -74,7 +78,7 @@ function checked({ data, error }) {
 export function createRestoreHandler(getDeps = loadDeps) {
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
-    const send = (status, body) => response.status(status).json(body);
+    const { send } = trackRequest(request, response, '/api/notes/:id/restore');
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
       send(405, { error: 'METHOD_NOT_ALLOWED' });
@@ -97,6 +101,7 @@ export function createRestoreHandler(getDeps = loadDeps) {
       return;
     }
     // 기기 승인이 안 된 요청도 감사 기록에 남기지 않습니다(로그인 없는 요청과 같음).
+    if (!(await guardIdentity(deps, login, send))) return;
     if (!(await guardDevice(deps, login, request, send))) return;
     const { supabase } = deps;
     const rawId = request.query?.id;
