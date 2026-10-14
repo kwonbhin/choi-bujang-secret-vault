@@ -300,6 +300,20 @@
 - `decide.mjs`가 경보 하나를 판단합니다(`npm run xdr:run -- web-injection`). 근거 패턴은 `patterns.json`(T1190: sql-injection, script-injection, path-traversal, command-injection)입니다. 문서용 표기와 실제 구문 모양을 모두 보며, block은 구문 모양이 뚜렷하고 `data.count`가 2번 이상일 때만 나옵니다.
 - `node xdr/web-injection/respond.mjs`는 block 후보를 위의 `xdr/deny-rules.json`에, block·alert 알림을 `xdr/alerts.log`에 쌓습니다.
 
+## 보너스: 알려진 취약점 악용 경보 (`xdr/known-cve`)
+
+- `decide.mjs`가 경보 하나를 판단합니다(`npm run xdr:run -- known-cve`). import·파일·네트워크 없이 혼자 계산합니다.
+- 근거 패턴은 `patterns.json`(CVE-2021-44228, T1190)입니다: jndi-lookup, jndi-lookup-obfuscated, jndi-lookup-incomplete, scanner-trace, t1190-without-lookup.
+- 머리글·인자(출발 주소·계정·횟수 칸 제외)를 URL 인코딩을 풀어 봅니다.
+  - 완전한 원격 조회 구문(`${jndi:<방식>://`, 대소문자·`${lower:}`·`${::-}` 중첩을 푼 뒤)이 있으면 block입니다(T1190이 함께 있으면 0.88~0.99, 없으면 0.86).
+  - 구문 앞부분만 있으면 alert(0.7), 설명에 점검 도구 흔적만 있으면 alert(0.6), T1190 표시만 있으면 alert(0.5), 나머지는 record입니다.
+  - 경보 묶음에는 평문 `ldap` 조회만 나오고, 중첩 난독화나 점검 도구 이름은 나오지 않습니다. 그래서 점검 도구 흔적은 설명의 "점검 흔적·점검 도구" 표기로만 보고, 도구 이름은 넣지 않았습니다.
+- 결과(로컬): block 8 · alert 8 · record 8. 정상 이벤트(kc-17~24)를 block한 경우는 없습니다.
+- `node xdr/known-cve/respond.mjs`는 block 후보를 `xdr/deny-rules.json`에(`xdr-kc-`, `xdr_known_cve_block`, `xdr_known_cve`, 60분 만료, 근거 경보 번호), block·alert 알림을 `xdr/alerts.log`에 쌓습니다.
+  - 같은 묶음에서 정상(record)으로 나온 주소·계정은 막지 않습니다.
+  - 다른 모듈의 규칙은 그대로 둡니다. 판정기에는 연결하지 않았습니다(이유는 위 brute-force 절과 같음).
+- `node xdr/known-cve/read-alerts.mjs`는 시각·출발 주소·계정·규칙 수준·설명만 보여 주고, 조회 구문이 있는 칸은 꺼내지 않습니다.
+
 ## 다시 실행하는 방법
 
 1. Supabase 대시보드 > SQL Editor에서 아래 순서대로 실행합니다. 뒤 파일이 앞 파일의 권한을 바꾸므로, 다시 실행할 때도 이 순서 전체를 지킵니다(예: `notes-rls.sql`만 다시 실행하면 authenticated 직접 권한이 되살아납니다).

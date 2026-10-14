@@ -1,0 +1,155 @@
+{
+  "schema": "aleph.xdr.result.v1",
+  "moduleKey": "known-cve",
+  "decisions": [
+    {
+      "alertId": "kc-01",
+      "action": "block",
+      "confidence": 0.94,
+      "reason": "jndi-lookup: useragent에 원격 조회 구문, T1190, 수준 13, 반복 정보 없음"
+    },
+    {
+      "alertId": "kc-02",
+      "action": "block",
+      "confidence": 0.92,
+      "reason": "jndi-lookup: url에 원격 조회 구문, T1190, 수준 12, 반복 정보 없음"
+    },
+    {
+      "alertId": "kc-03",
+      "action": "block",
+      "confidence": 0.97,
+      "reason": "jndi-lookup: url에 원격 조회 구문, T1190, 수준 12, 반복 6번"
+    },
+    {
+      "alertId": "kc-04",
+      "action": "block",
+      "confidence": 0.98,
+      "reason": "jndi-lookup: useragent에 원격 조회 구문, T1190, 수준 13, 반복 4번"
+    },
+    {
+      "alertId": "kc-05",
+      "action": "block",
+      "confidence": 0.92,
+      "reason": "jndi-lookup+scanner-trace: url에 원격 조회 구문, T1190, 수준 12, 반복 정보 없음"
+    },
+    {
+      "alertId": "kc-06",
+      "action": "block",
+      "confidence": 0.95,
+      "reason": "jndi-lookup: url에 원격 조회 구문, T1190, 수준 11, 반복 8번"
+    },
+    {
+      "alertId": "kc-07",
+      "action": "block",
+      "confidence": 0.92,
+      "reason": "jndi-lookup: useragent에 원격 조회 구문, T1190, 수준 12, 반복 정보 없음"
+    },
+    {
+      "alertId": "kc-08",
+      "action": "block",
+      "confidence": 0.88,
+      "reason": "jndi-lookup: url·useragent에 원격 조회 구문, T1190, 수준 10, 반복 정보 없음"
+    },
+    {
+      "alertId": "kc-09",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 6, 반복 1번"
+    },
+    {
+      "alertId": "kc-10",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 5, 반복 1번"
+    },
+    {
+      "alertId": "kc-11",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 7, 반복 1번"
+    },
+    {
+      "alertId": "kc-12",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 6, 반복 1번"
+    },
+    {
+      "alertId": "kc-13",
+      "action": "alert",
+      "confidence": 0.6,
+      "reason": "scanner-trace: 점검 도구 흔적만 있고 조회 구문 없음, 수준 5, 반복 1번"
+    },
+    {
+      "alertId": "kc-14",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 7, 반복 1번"
+    },
+    {
+      "alertId": "kc-15",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 6, 반복 1번"
+    },
+    {
+      "alertId": "kc-16",
+      "action": "alert",
+      "confidence": 0.5,
+      "reason": "t1190-without-lookup: T1190 표시만 있고 조회 구문 없음, 수준 8, 반복 2번"
+    },
+    {
+      "alertId": "kc-17",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-18",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-19",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-20",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-21",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-22",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-23",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    },
+    {
+      "alertId": "kc-24",
+      "action": "record",
+      "confidence": 0,
+      "reason": "일치 패턴 없음: T1190 표시·조회 구문 없음"
+    }
+  ],
+  "counts": {
+    "block": 8,
+    "alert": 8,
+    "record": 8
+  }
+}

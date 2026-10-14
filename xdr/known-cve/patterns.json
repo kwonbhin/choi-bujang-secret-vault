@@ -1,0 +1,52 @@
+{
+  "moduleKey": "known-cve",
+  "source": "CVE-2021-44228 Apache Log4j2 JNDI 조회 원격 코드 실행 (https://nvd.nist.gov/vuln/detail/CVE-2021-44228), MITRE ATT&CK T1190 Exploit Public-Facing Application (https://attack.mitre.org/techniques/T1190/)",
+  "note": "경보 원문에 실제로 나오는 모양(머리글 useragent·주소 인자 url 안의 ${jndi:ldap://…} 표기, 설명의 '점검 흔적·점검 도구' 표기, T1190 표시)을 보고 정했습니다. 숫자 기준은 decide.mjs 에서 정합니다. 경보의 조회 구문은 문서용 표기이므로 실제 공격 문자열로 바꾸거나 다른 시스템에 넣지 않습니다. 점검 도구 이름 목록은 경보 원문에 없어 넣지 않았습니다.",
+  "patterns": [
+    {
+      "name": "jndi-lookup",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "where": "요청 머리글·인자(data.useragent, data.url 의 경로·? 뒤 인자, 그 밖의 data 문자열 칸. 출발 주소·계정·횟수 칸은 제외)",
+        "lookup": "${jndi:<방식>://…} 모양의 원격 조회 구문이 완전히 있음 (대소문자 무시, URL 인코딩을 푼 뒤)",
+        "mitre": "rule.mitre 에 T1190 이 있으면 확신도를 더 높임"
+      },
+      "evidence": "CVE-2021-44228: Log4j2가 기록하는 문자열 안의 ${jndi:…} 조회를 해석해 공격자 서버(LDAP 등)에서 코드를 받아 실행하며, 머리글·요청 인자로 이 구문을 넣는 것이 T1190(공개 웹 앱 악용)의 형태입니다."
+    },
+    {
+      "name": "jndi-lookup-obfuscated",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "where": "jndi-lookup 과 같음",
+        "nestedLookup": "${lower:j}·${upper:N}·${::-d}·${env:X:-i} 같은 중첩 조회를 풀어 보면 ${jndi:<방식>://…} 이 됨"
+      },
+      "evidence": "CVE-2021-44228: Log4j2는 조회 안의 조회를 먼저 풀기 때문에 ${lower:j}처럼 글자를 쪼갠 중첩 조회도 같은 ${jndi:…} 조회가 되며, 단순 문자열 비교를 피하려는 변형으로 쓰였습니다(이 경보 묶음에는 나오지 않음)."
+    },
+    {
+      "name": "jndi-lookup-incomplete",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "where": "jndi-lookup 과 같음",
+        "partial": "${jndi: 로 시작하지만 <방식>:// 까지 이어지지 않는 애매한 모양"
+      },
+      "evidence": "CVE-2021-44228: 원격 조회는 ${jndi:<방식>://주소} 가 완전해야 일어나므로, 앞부분만 있는 모양은 악용 시도인지 잘린 기록인지 사람이 확인해야 합니다."
+    },
+    {
+      "name": "scanner-trace",
+      "technique": "T1190 Exploit Public-Facing Application (관련: T1595.002 Vulnerability Scanning)",
+      "match": {
+        "description": "rule.description 에 '취약점 점검 흔적' 또는 '점검 도구' 표기가 있음 ('아닙니다·없습니다' 문장 제외)"
+      },
+      "evidence": "T1190 악용 전에 공개 취약점이 있는지 자동 점검 도구로 훑는 활동(T1595.002)이 함께 보이면 공격 준비로 볼 수 있지만, 흔적만으로는 악용 여부를 확정할 수 없습니다."
+    },
+    {
+      "name": "t1190-without-lookup",
+      "technique": "T1190 Exploit Public-Facing Application",
+      "match": {
+        "mitre": "rule.mitre 에 T1190 이 있음",
+        "noLookup": "요청 머리글·인자와 설명 어디에도 원격 조회 구문이 없음 (CVE 번호·jndi 단어·잘린 글자만 있음)"
+      },
+      "evidence": "T1190 표시는 공개 앱 악용 의심이지만, CVE-2021-44228은 ${jndi:…} 조회 구문이 있어야 악용되므로 구문이 없으면 확정하지 않고 사람이 확인합니다."
+    }
+  ]
+}
