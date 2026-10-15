@@ -222,86 +222,81 @@ test('요청 ID: 보호 API 응답마다 X-Request-Id, 로그는 한 줄에 메�
   }
 });
 
-test('제출 점검(12단계): GET·HEAD만, 점검마다 한 번, 정해진 순서, alephEvidence는 fetch 옵션에만', async () => {
+test('제출 점검(12단계): GET만, 점검마다 한 번, 정해진 순서, alephEvidence는 fetch 옵션에만, observed는 HTTP 상태 또는 not_run', async () => {
   const sent = [];
   const originalFetch = globalThis.fetch;
-  const originalKey = process.env.SUPABASE_PUBLISHABLE_KEY;
   globalThis.fetch = async (url, init = {}) => {
     sent.push({ url: String(url), init });
-    return new Response(init.method === 'HEAD' ? null : JSON.stringify({ error: 'LOGIN_REQUIRED' }),
-      { status: 401, headers: { 'content-type': 'application/json', 'x-request-id': randomUUID() } });
+    return new Response(JSON.stringify({ error: 'LOGIN_REQUIRED' }), { status: 401, headers: { 'content-type': 'application/json' } });
   };
   try {
     for (const key of [undefined, 'test-only-fake-publishable-key']) {
       sent.length = 0;
+      const originalKey = process.env.SUPABASE_PUBLISHABLE_KEY;
       if (key) process.env.SUPABASE_PUBLISHABLE_KEY = key; else delete process.env.SUPABASE_PUBLISHABLE_KEY;
       const checks = await runAttackChecks({ ...config, step: 12 });
-      const plan = stage12Plan({ ...config, step: 12 });
+      if (originalKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY; else process.env.SUPABASE_PUBLISHABLE_KEY = originalKey;
+      const plan = stage12Plan();
       assert.ok(checks.length <= 20);
       assert.deepEqual(checks.map(c => c.attackId), plan.map(p => p.attackId));
-      const requested = checks.filter(c => !c.observed.startsWith('not_run:'));
+      for (const c of checks) assert.match(c.observed, /^(?:HTTP \d{3}|not_run)$/u, c.attackId);
+      const requested = checks.filter(c => c.observed !== 'not_run');
       assert.equal(sent.length, requested.length);
+      assert.equal(sent.length, plan.filter(p => !p.notRun).length);
       assert.deepEqual(sent.map(s => s.init.alephEvidence.caseId), requested.map(c => c.attackId));
-      const keys = new Set();
       for (const { url, init } of sent) {
-        assert.ok(['GET', 'HEAD'].includes(init.method), init.method);
+        assert.equal(init.method, 'GET');
         assert.equal(init.body, undefined);
-        assert.match(init.alephEvidence.requestKey, UUID);
-        keys.add(init.alephEvidence.requestKey);
-        assert.equal(url.includes(init.alephEvidence.requestKey), false);
-        assert.equal(JSON.stringify(init.headers ?? {}).includes(init.alephEvidence.requestKey), false);
+        assert.equal(init.alephEvidence.requestKey, 'read');
+        assert.equal(url.includes('alephEvidence'), false);
         assert.equal(JSON.stringify(init.headers ?? {}).includes('alephEvidence'), false);
+        assert.equal(url.startsWith('https://'), true);
       }
-      assert.equal(keys.size, sent.length);
-      for (const c of requested) assert.match(c.observed, /^HTTP \d{3}\b/u, c.attackId);
-      const original = checks.find(c => c.attackId === 'anon_original_api_read');
-      assert.equal(original.observed.startsWith('not_run:'), !key);
+      // 키가 있어도 원본 API에는 보내지 않습니다(묶음은 배포 주소 GET만).
+      assert.equal(checks.find(c => c.attackId === 'anon_original_api_read').observed, 'not_run');
     }
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY; else process.env.SUPABASE_PUBLISHABLE_KEY = originalKey;
   }
 });
 
-test('제출 점검(12단계): 미실행 점검의 observed는 not_run으로 시작', async () => {
+test('제출 점검(12단계): 요청이 실패하면 그 점검은 not_run', async () => {
   const originalFetch = globalThis.fetch;
-  const originalKey = process.env.SUPABASE_PUBLISHABLE_KEY;
-  globalThis.fetch = async () => new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } });
-  delete process.env.SUPABASE_PUBLISHABLE_KEY;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
   try {
     const checks = await runAttackChecks({ ...config, step: 12 });
-    const notRun = ['restore_post_without_login', 'anon_original_api_write', 'relay_step_up_data_block', 'anon_original_api_read'];
-    for (const id of notRun) assert.match(checks.find(c => c.attackId === id).observed, /^not_run: /u, id);
-    for (const c of checks) assert.match(c.observed, /^(?:HTTP \d{3}\b|not_run: )/u, c.attackId);
-    // 미실행이 아닌 점검은 모두 요청을 보낸 점검입니다.
-    assert.equal(checks.filter(c => c.observed.startsWith('not_run: ')).length, notRun.length);
+    assert.ok(checks.every(c => c.observed === 'not_run'));
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY; else process.env.SUPABASE_PUBLISHABLE_KEY = originalKey;
   }
 });
 
-test('제출 점검(12단계): child_process를 부르지 않음(코드에 없고, 실행 권한을 막은 Node에서도 끝까지 돎)', () => {
+test('제출 점검(12단계): 모듈·Buffer·crypto 없이 돎(격리 환경 흉내: Buffer·process 정보를 지운 Node, 하위 프로세스 금지)', () => {
   const source = readFileSync(new URL('../src/attack-check.mjs', import.meta.url), 'utf8');
+  const stage12 = source.slice(source.indexOf('// 12단계 점검:'), source.indexOf('export async function runAttackChecks'));
+  for (const word of ['import(', 'import ', 'crypto', 'randomUUID', 'btoa', 'TextEncoder', 'process.', 'child_process', 'require(']) {
+    assert.equal(stage12.includes(word), false, word);
+  }
+  // 전역 Buffer는 쓰지 않습니다(응답 메서드 arrayBuffer()는 전역 객체가 아님).
+  assert.equal(/(?<![A-Za-z])Buffer\b/u.test(stage12), false, 'Buffer');
   for (const word of ['child_process', 'execFile', 'execSync', 'spawn(', 'node:net', 'node:http', 'writeFile']) {
     assert.equal(source.includes(word), false, word);
   }
-  // Node 권한 모델(--permission)은 하위 프로세스 실행과 파일 쓰기를 막습니다. 그 안에서 12단계 점검을 끝까지 돌립니다.
   const script = `
-    globalThis.fetch = async (url, init) => new Response(init.method === 'HEAD' ? null : '{"error":"LOGIN_REQUIRED"}', { status: 401 });
+    delete globalThis.Buffer;
+    globalThis.fetch = async (url, init) => new Response('{"error":"LOGIN_REQUIRED"}', { status: 401 });
     const { runAttackChecks } = await import(${JSON.stringify(new URL('../src/attack-check.mjs', import.meta.url).href)});
     const config = JSON.parse(process.env.CHECK_CONFIG);
     const checks = await runAttackChecks(config);
-    process.stdout.write(JSON.stringify(checks.map(c => c.observed.slice(0, 8))));
+    process.stdout.write(JSON.stringify(checks.map(c => c.observed)));
   `;
   const out = execFileSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e', script], {
     encoding: 'utf8', windowsHide: true,
-    env: { ...process.env, SUPABASE_PUBLISHABLE_KEY: '', CHECK_CONFIG: JSON.stringify({ ...config, step: 12 }) },
+    env: { ...process.env, CHECK_CONFIG: JSON.stringify({ ...config, step: 12 }) },
   });
   const observed = JSON.parse(out);
-  assert.equal(observed.length, stage12Plan({ ...config, step: 12 }).length);
-  assert.ok(observed.every(text => text.startsWith('HTTP ') || text.startsWith('not_run:')), out);
-  // 같은 권한 모델에서 하위 프로세스를 부르면 실제로 막히는지도 확인합니다(시험이 헛돌지 않게).
+  assert.equal(observed.length, stage12Plan().length);
+  assert.ok(observed.every(text => text === 'HTTP 401' || text === 'not_run'), out);
   assert.throws(() => execFileSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e',
     "import('node:child_process').then(m => m.execFileSync('git', ['--version']))"], { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }));
 });
