@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BYTE BACK | 보안 Agent 빈 · 13단계</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #101a28; color: #ecf4ff; }
+    main { max-width: 860px; margin: 0 auto; padding: 36px 22px 64px; }
+    .eyebrow { color: #8ad8df; font-size: 14px; font-weight: 700; letter-spacing: .08em; }
+    h1 { margin: 12px 0 6px; font-size: clamp(26px, 6vw, 40px); line-height: 1.2; }
+    .lede { font-size: 16px; line-height: 1.7; color: #bfd0e5; margin: 0 0 22px; }
+
+    .menu { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; border-bottom: 1px solid #2c3f55; padding-bottom: 12px; }
+    .menu-item { font: inherit; font-weight: 700; padding: 9px 16px; border: 1px solid #51667c; border-radius: 10px; background: #1a2a3d; color: #ecf4ff; cursor: pointer; }
+    .menu-item[aria-selected="true"] { background: #8ad8df; color: #101a28; border-color: #8ad8df; }
+    .menu-item:focus-visible { outline: 3px solid #8ad8df; outline-offset: 2px; }
+
+    .panel { border: 1px solid #2c3f55; border-radius: 14px; padding: 20px; background: #16263a; }
+    .panel:focus-visible { outline: 3px solid #8ad8df; outline-offset: 2px; }
+    .panel h2 { font-size: 19px; margin: 0 0 12px; }
+    .panel-bar { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+    .reload { font: inherit; font-weight: 700; padding: 9px 16px; border: 1px solid #8ad8df; border-radius: 10px; background: transparent; color: #8ad8df; cursor: pointer; }
+    .reload:focus-visible { outline: 3px solid #8ad8df; outline-offset: 2px; }
+
+    .identity-block { border: 1px solid #38506c; border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; background: #1a2a3d; }
+    .identity-block-title { font-size: 15px; margin: 0 0 10px; color: #8ad8df; }
+    .identity-mode { display: inline-block; margin: 0 0 10px; padding: 3px 10px; font-size: 13px; border-radius: 999px; background: #24344a; color: #bfd0e5; border: 1px solid #51667c; }
+    .identity-mode[data-mode="demo"] { color: #ffe9b0; border-color: #b79549; }
+    .identity-mode[data-mode="disconnected"] { color: #ffb4c0; border-color: #d07384; }
+    .identity-row { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; font-size: 15px; }
+    .identity-label { color: #8aa0ba; min-width: 74px; }
+    .identity-value { color: #ecf4ff; font-weight: 600; }
+    .identity-value[data-tone="ok"] { color: #86e6b0; }
+    .identity-value[data-tone="warn"] { color: #ffb4c0; }
+    .identity-value[data-tone="unknown"] { color: #c9b98a; }
+    .identity-value[data-tone="alert"] { color: #ffb4c0; }
+    .identity-list { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
+    .identity-list li { border: 1px solid #38506c; border-radius: 10px; padding: 8px 12px; background: #16263a; }
+    .student-identity h2 { font-size: 17px; margin: 0 0 12px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">BYTE BACK · 보안 Agent 「빈」 · 13단계</div>
+    <h1>로그인 사용자·기기·세션</h1>
+    <p class="lede">지금 로그인한 직원 본인의 계정, 현재 기기, 로그인 세션을 상태에 맞게 보여 줍니다. 아래 자료는 모두 실습용 예제입니다.</p>
+    <div id="app"></div>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "me": {
+    "status": "ok",
+    "mode": "demo",
+    "data": {
+      "user": { "id": "u_demo_001", "label": "빈 (demo@example.com)" },
+      "device": { "id": "dev_mac_01", "label": "내 노트북", "status": "compliant" },
+      "session": { "id": "sess_a1b2c3d4", "status": "active" }
+    }
+  },
+  "devices": {
+    "status": "ok",
+    "mode": "demo",
+    "data": [
+      { "id": "dev_mac_01", "label": "내 노트북", "status": "compliant" },
+      { "id": "dev_win_02", "label": "강의실 PC", "status": "noncompliant" },
+      { "id": "dev_unknown_03", "label": "미확인 기기", "status": "unknown" }
+    ]
+  },
+  "sessions": {
+    "status": "ok",
+    "mode": "demo",
+    "data": [
+      { "id": "sess_a1b2c3d4", "status": "active" },
+      { "id": "sess_e5f6g7h8", "status": "expired" },
+      { "id": "sess_i9j0k1l2", "status": "revoked" }
+    ]
+  }
+}
