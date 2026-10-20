@@ -80,7 +80,8 @@ function selectTab(index) {
   MENUS.forEach((menu, i) => {
     const active = i === index;
     tabs[i].setAttribute('aria-selected', active ? 'true' : 'false');
-    tabs[i].tabIndex = active ? 0 : -1; // roving tabindex: Tab 은 선택된 탭에만
+    // 세 메뉴 모두 Tab 순서에 둡니다. Tab 으로 각 메뉴에 도달하고 Enter(또는 Space)로 선택합니다.
+    tabs[i].tabIndex = 0;
     panels.get(menu.id).hidden = !active;
   });
 }
