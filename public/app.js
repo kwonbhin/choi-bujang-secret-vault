@@ -2,7 +2,7 @@
 // 역할: 세 메뉴(보호 현황·업무 앱·보안 기록)를 마우스와 Tab·Enter 로 오갈 수 있게 하고,
 //       '다시 불러오기'로 신원 데이터를 다시 받아 학생 함수 renderIdentity 에 넘깁니다.
 // 학생 모듈은 public 안에서 제공됩니다(/student/extension.mjs). 빌드가 student/ 를 복사합니다.
-import { createStudentView, createDecisionView } from './student/extension.mjs';
+import { createStudentView, createDecisionView, createEventsView } from './student/extension.mjs';
 
 // 예제 신원 데이터. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const IDENTITY_SOURCE = './identity.sample.json';
@@ -16,6 +16,7 @@ const MENUS = [
 const app = document.querySelector('#app');
 const studentView = createStudentView();
 const decisionView = createDecisionView();
+const eventsView = createEventsView();
 
 // 업무 앱 목록(예제). 접근 요청 시 선택한 앱 하나의 판정을 받습니다.
 const WORK_APPS = [
@@ -57,12 +58,31 @@ function buildPanel(menu) {
   } else if (menu.id === 'apps') {
     buildAppsPanel(panel);
   } else {
-    panel.append(exampleList('보안 기록(예제)', [
-      '등록되지 않은 기기의 접속 시도 거부',
-      '평소와 다른 시각·네트워크의 접속 추가 확인',
-    ]));
+    buildLogPanel(panel);
   }
   return panel;
+}
+
+// 보안 기록 패널: 관측 범위 안내(제공 화면 몫) + 다시 불러오기 + renderEvents 목록
+function buildLogPanel(panel) {
+  const h = document.createElement('h2');
+  h.textContent = '보안 기록';
+  panel.append(h);
+
+  const scope = document.createElement('p');
+  scope.className = 'panel-hint';
+  scope.textContent = '이 목록은 본인의 최근 40건입니다. 전체 로그나 다른 직원 기록, 실시간 전체 탐지가 아닙니다.';
+  panel.append(scope);
+
+  const bar = document.createElement('div');
+  bar.className = 'panel-bar';
+  const reload = document.createElement('button');
+  reload.type = 'button';
+  reload.className = 'reload';
+  reload.textContent = '다시 불러오기';
+  reload.addEventListener('click', () => { loadEvents(); });
+  bar.append(reload);
+  panel.append(bar, eventsView.element);
 }
 
 function exampleList(title, items) {
@@ -150,6 +170,20 @@ async function loadDecision(appId) {
   }
 }
 
+// 예제 보안 기록. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
+const EVENTS_SOURCE = './events.sample.json';
+async function loadEvents() {
+  eventsView.update({ status: 'loading' });
+  try {
+    const response = await fetch(EVENTS_SOURCE, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`서버 응답 ${response.status}`);
+    const data = await response.json();
+    eventsView.update({ status: 'ok', mode: 'demo', data });
+  } catch (error) {
+    eventsView.update({ status: 'error', mode: 'disconnected', error: { message: error.message } });
+  }
+}
+
 function selectTab(index) {
   MENUS.forEach((menu, i) => {
     const active = i === index;
@@ -213,3 +247,4 @@ async function loadIdentity() {
 }
 
 loadIdentity();
+loadEvents();

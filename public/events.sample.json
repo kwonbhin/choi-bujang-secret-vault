@@ -1,0 +1,49 @@
+[
+  {
+    "id": "ev-1001",
+    "kind": "access",
+    "at": "2026-10-20T10:40:00+09:00",
+    "appId": "vault",
+    "summary": "자료실 접근 허용",
+    "evidence": [{ "id": "e1", "text": "등록 기기에서 접속" }],
+    "rules": [{ "id": "device_registered", "text": "등록 기기 허용" }],
+    "state": { "access": "allowed", "session": "active", "device": "compliant" },
+    "supportedActions": []
+  },
+  {
+    "id": "ev-1002",
+    "kind": "access",
+    "at": "2026-10-20T03:12:00+09:00",
+    "appId": "payroll",
+    "summary": "결재 접근 거부",
+    "evidence": [{ "id": "e1", "text": "권한 없는 계정의 요청" }],
+    "rules": [{ "id": "zone_notice_update", "text": "권한 밖 접근 거부" }],
+    "state": { "access": "denied", "session": "active", "device": "compliant" },
+    "supportedActions": []
+  },
+  {
+    "id": "ev-2001",
+    "kind": "xdr",
+    "at": "2026-10-19T23:50:00+09:00",
+    "appId": "",
+    "summary": "브루트포스 의심 경보",
+    "evidence": [{ "id": "a1", "text": "짧은 시간에 로그인 실패 다수" }],
+    "rules": [{ "id": "brute_force", "text": "연속 실패 임계 초과" }],
+    "state": { "access": "unknown", "session": "expired", "device": "unknown" },
+    "supportedActions": []
+  },
+  {
+    "id": "ev-2002",
+    "kind": "xdr",
+    "at": "2026-10-19T21:05:00+09:00",
+    "appId": "mail",
+    "summary": "비정상 외부 전송 경보",
+    "evidence": [
+      { "id": "a1", "text": "대량 외부 전송 감지" },
+      { "id": "a2", "text": "평소와 다른 시각" }
+    ],
+    "rules": [{ "id": "exfiltration", "text": "외부 유출 패턴" }],
+    "state": { "access": "denied", "session": "revoked", "device": "noncompliant" },
+    "supportedActions": []
+  }
+]
