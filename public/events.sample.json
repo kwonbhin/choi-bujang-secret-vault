@@ -44,6 +44,6 @@
     ],
     "rules": [{ "id": "exfiltration", "text": "외부 유출 패턴" }],
     "state": { "access": "denied", "session": "revoked", "device": "noncompliant" },
-    "supportedActions": []
+    "supportedActions": ["revoke_session"]
   }
 ]

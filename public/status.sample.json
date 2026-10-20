@@ -1,0 +1,32 @@
+{
+  "devices": {
+    "status": "ok",
+    "mode": "demo",
+    "data": [
+      { "id": "dev_mac_01", "label": "내 노트북", "status": "compliant" },
+      { "id": "dev_win_02", "label": "강의실 PC", "status": "noncompliant" }
+    ]
+  },
+  "sessions": {
+    "status": "ok",
+    "mode": "demo",
+    "data": [
+      { "id": "sess_a1b2c3d4", "status": "active" }
+    ]
+  },
+  "notifications": [
+    { "resource": "vault", "code": "backup_missing", "message": "백업 사본이 없습니다." },
+    { "resource": "device:dev_win_02", "code": "noncompliant", "message": "기기가 보안 기준을 충족하지 않습니다." }
+  ],
+  "diagnostics": {
+    "status": "ok",
+    "mode": "demo",
+    "data": {
+      "requestId": "req-20261020-0001",
+      "component": "app-server",
+      "version": "1.4.0",
+      "checkedAt": "2026-10-20T14:00:00+09:00",
+      "engine": { "mode": "demo", "code": "OK" }
+    }
+  }
+}

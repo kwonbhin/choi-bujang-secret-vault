@@ -482,6 +482,25 @@ export function renderEvents({ status, mode, data, error } = {}) {
     box.append(row('접근(access)', accessLabel(st.access), accessTone(st.access)));
     box.append(row('세션(session)', sessionStatusLabel(st.session), sessionTone(st.session)));
     box.append(row('기기(device)', deviceStatusLabel(st.device), deviceTone(st.device)));
+
+    // 16단계: 미지원 조치가 입력된 경우에만 비활성 안내 버튼을 둡니다(요청은 보내지 않음).
+    const actions = Array.isArray(e.supportedActions) ? e.supportedActions : [];
+    if (actions.length) {
+      const aH = document.createElement('h4');
+      aH.textContent = '조치(미지원)';
+      box.append(aH);
+      for (const act of actions) {
+        const name = (act && typeof act === 'object') ? String(act.id ?? act.action ?? '') : String(act);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'events-action-btn';
+        btn.disabled = true; // 비활성: 어떤 요청도 보내지 않습니다.
+        btn.textContent = `${name} 미지원`;
+        btn.setAttribute('aria-label', `${name} 미지원`);
+        box.append(btn);
+      }
+      box.append(row('안내', '조치 실행 연결은 준비 중입니다. 요청을 보내지 않습니다.'));
+    }
     return box;
   }
 
@@ -547,6 +566,181 @@ export function createEventsView() {
     element: root,
     update(input) {
       slot.replaceChildren(renderEvents(input ?? {}));
+    },
+  };
+}
+
+// ===== 16단계: 알림·기기·세션·진단·오류·빈 화면 (renderStatus) =====
+// 입력: renderStatus({ devices, sessions, notifications, diagnostics, mode })
+//   devices·sessions·diagnostics: { status, mode, data?, error? }
+//   notifications: [{ resource, code, message }]
+//   diagnostics.data: { requestId, component, version, checkedAt, engine:{ mode, code } }
+// 규칙: 불러오는 중·빈 목록·실패를 서로 다른 문장으로. 자동 재요청 없음(사용자가 버튼 누름).
+//       진단 정보는 입력으로 받음(학생이 /api/diagnostics 직접 호출하지 않음). 비밀값 표시·복사 금지.
+//       "도움정보 복사" 버튼은 누를 때만 안전한 값만 복사. textContent 만.
+
+// 실패 시 '다시 시도' 안내(자동 재요청 아님). 시간 초과면 그 사실을 드러냅니다.
+function appendRetryHint(sec, field) {
+  const msg = String(field?.error?.message ?? '');
+  const isTimeout = field?.error?.code === 'TIMEOUT' || /timeout|시간\s*초과/i.test(msg);
+  if (isTimeout) sec.append(row('구분', '요청 시간이 초과되었습니다.', 'alert'));
+  sec.append(row('다시 시도', '다시 시도는 위쪽 다시 불러오기 버튼을 직접 누르세요'));
+}
+
+function statusDevices(field) {
+  const sec = blockShell('등록 기기 상태', field, 'status-devices');
+  if (field?.status === 'loading') { sec.append(row('상태', '불러오는 중')); return sec; }
+  if (field?.status === 'error') {
+    sec.append(row('상태', `등록 기기를 불러오지 못했습니다: ${field?.error?.message ?? '확인 불가'}`, 'alert'));
+    appendRetryHint(sec, field);
+    return sec;
+  }
+  const list = Array.isArray(field?.data) ? field.data : [];
+  if (!list.length) { sec.append(row('상태', '등록된 기기가 없습니다')); return sec; }
+  const ul = document.createElement('ul');
+  ul.className = 'identity-list';
+  for (const d of list) {
+    const li = document.createElement('li');
+    li.append(row(d?.label ?? '확인 불가', deviceStatusLabel(d?.status), deviceTone(d?.status)));
+    ul.append(li);
+  }
+  sec.append(ul);
+  return sec;
+}
+
+function statusSessions(field) {
+  const sec = blockShell('현재 연결(세션)', field, 'status-sessions');
+  if (field?.status === 'loading') { sec.append(row('상태', '불러오는 중')); return sec; }
+  if (field?.status === 'error') {
+    sec.append(row('상태', `현재 연결을 불러오지 못했습니다: ${field?.error?.message ?? '확인 불가'}`, 'alert'));
+    appendRetryHint(sec, field);
+    return sec;
+  }
+  const list = Array.isArray(field?.data) ? field.data : [];
+  if (!list.length) { sec.append(row('상태', '현재 연결 없음')); return sec; }
+  const ul = document.createElement('ul');
+  ul.className = 'identity-list';
+  for (const s of list) {
+    const li = document.createElement('li');
+    li.append(row(`세션 ${s?.id ?? ''}`, sessionStatusLabel(s?.status), sessionTone(s?.status)));
+    ul.append(li);
+  }
+  sec.append(ul);
+  sec.append(row('안내', '현재 검증된 연결 하나만 표시합니다. 지난 세션 목록이 아닙니다.'));
+  return sec;
+}
+
+function statusNotifications(notifications) {
+  const sec = document.createElement('section');
+  sec.className = 'status-block';
+  sec.dataset.field = 'notifications';
+  const h = document.createElement('h3');
+  h.className = 'identity-block-title';
+  h.textContent = '알림';
+  sec.append(h);
+  const list = Array.isArray(notifications) ? notifications : [];
+  if (!list.length) { sec.append(row('상태', '주의할 알림이 없습니다')); return sec; }
+  const ul = document.createElement('ul');
+  ul.className = 'identity-list';
+  for (const n of list) {
+    const li = document.createElement('li');
+    li.append(row('자료(resource)', String(n?.resource ?? '확인 불가')));
+    li.append(row('코드(code)', String(n?.code ?? '')));
+    li.append(row('메시지', String(n?.message ?? '')));
+    ul.append(li);
+  }
+  sec.append(ul);
+  return sec;
+}
+
+// 도움정보 복사: 누를 때만 안전한 6개 값만 복사(비밀번호·토큰·키 제외).
+function appendCopyButton(sec, field) {
+  const note = document.createElement('p');
+  note.className = 'status-note';
+  note.textContent = '아래 버튼은 도움 요청에 쓸 진단 정보만 복사합니다. 비밀번호·토큰·API 키는 포함하지 않습니다.';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'reload';
+  btn.textContent = '도움정보 복사';
+  btn.addEventListener('click', () => {
+    const d = (field?.status === 'ok' && field?.data) ? field.data : {};
+    const text = [
+      `requestId: ${d.requestId ?? ''}`,
+      `component: ${d.component ?? ''}`,
+      `version: ${d.version ?? ''}`,
+      `checkedAt: ${d.checkedAt ?? ''}`,
+      `engine.mode: ${d.engine?.mode ?? ''}`,
+      `engine.code: ${d.engine?.code ?? ''}`,
+    ].join('\n');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+    } catch (_) { /* 복사 실패는 무시 */ }
+  });
+  sec.append(note, btn);
+}
+
+function statusDiagnostics(field) {
+  const sec = blockShell('진단 정보', field, 'status-diagnostics');
+  if (field?.status === 'loading') { sec.append(row('상태', '불러오는 중')); appendCopyButton(sec, field); return sec; }
+  if (field?.status === 'error') {
+    sec.append(row('상태', `진단 정보를 불러오지 못했습니다: ${field?.error?.message ?? '확인 불가'}`, 'alert'));
+    appendRetryHint(sec, field);
+    appendCopyButton(sec, field);
+    return sec;
+  }
+  const d = field?.data ?? {};
+  // 안전한 값만 표시합니다(토큰·키 등은 쓰지 않음).
+  sec.append(row('requestId', String(d.requestId ?? '')));
+  sec.append(row('component', String(d.component ?? '')));
+  sec.append(row('version', String(d.version ?? '')));
+  sec.append(row('checkedAt', String(d.checkedAt ?? '')));
+  sec.append(row('engine.mode', String(d.engine?.mode ?? '')));
+  sec.append(row('engine.code', String(d.engine?.code ?? '')));
+  appendCopyButton(sec, field);
+  return sec;
+}
+
+export function renderStatus({ devices, sessions, notifications, diagnostics, mode } = {}) {
+  const root = document.createElement('section');
+  root.className = 'status';
+  root.setAttribute('aria-label', '보안 상태·알림·진단');
+
+  const notice = modeNotice(mode);
+  if (notice) root.append(notice);
+
+  root.append(statusDevices(devices ?? { status: 'unknown' }));
+  root.append(statusSessions(sessions ?? { status: 'unknown' }));
+  root.append(statusNotifications(notifications));
+  root.append(statusDiagnostics(diagnostics ?? { status: 'unknown' }));
+  return root;
+}
+
+// 보호 현황에 함께 붙는 상태 화면. update 로 새 입력이 오면 통째로 교체합니다(성공 시 이전 오류 제거).
+export function createStatusView() {
+  const root = document.createElement('div');
+  root.className = 'student-status';
+
+  const heading = document.createElement('h2');
+  heading.textContent = '보안 상태·알림·진단';
+  root.append(heading);
+
+  const slot = document.createElement('div');
+  slot.className = 'student-status-slot';
+  slot.setAttribute('aria-live', 'polite');
+  root.append(slot);
+
+  slot.append(renderStatus({
+    devices: { status: 'loading' },
+    sessions: { status: 'loading' },
+    diagnostics: { status: 'loading' },
+    notifications: [],
+  }));
+
+  return {
+    element: root,
+    update(input) {
+      slot.replaceChildren(renderStatus(input ?? {}));
     },
   };
 }

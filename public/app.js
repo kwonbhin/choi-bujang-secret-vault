@@ -2,7 +2,7 @@
 // 역할: 세 메뉴(보호 현황·업무 앱·보안 기록)를 마우스와 Tab·Enter 로 오갈 수 있게 하고,
 //       '다시 불러오기'로 신원 데이터를 다시 받아 학생 함수 renderIdentity 에 넘깁니다.
 // 학생 모듈은 public 안에서 제공됩니다(/student/extension.mjs). 빌드가 student/ 를 복사합니다.
-import { createStudentView, createDecisionView, createEventsView } from './student/extension.mjs';
+import { createStudentView, createDecisionView, createEventsView, createStatusView } from './student/extension.mjs';
 
 // 예제 신원 데이터. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const IDENTITY_SOURCE = './identity.sample.json';
@@ -17,6 +17,7 @@ const app = document.querySelector('#app');
 const studentView = createStudentView();
 const decisionView = createDecisionView();
 const eventsView = createEventsView();
+const statusView = createStatusView();
 
 // 업무 앱 목록(예제). 접근 요청 시 선택한 앱 하나의 판정을 받습니다.
 const WORK_APPS = [
@@ -52,9 +53,10 @@ function buildPanel(menu) {
     reload.type = 'button';
     reload.className = 'reload';
     reload.textContent = '다시 불러오기';
-    reload.addEventListener('click', () => { loadIdentity(); });
+    // 위쪽 '다시 불러오기': 신원과 보안 상태(기기·세션·알림·진단)를 사용자가 누를 때만 다시 불러옵니다.
+    reload.addEventListener('click', () => { loadIdentity(); loadStatus(); });
     bar.append(reload);
-    panel.append(bar, studentView.element);
+    panel.append(bar, studentView.element, statusView.element);
   } else if (menu.id === 'apps') {
     buildAppsPanel(panel);
   } else {
@@ -170,6 +172,33 @@ async function loadDecision(appId) {
   }
 }
 
+// 진단 정보는 제공 화면(이 호스트)이 조회해 renderStatus 입력으로 전달합니다.
+// 학생 코드(student/extension.mjs)는 /api/diagnostics 를 직접 호출하지 않습니다.
+const STATUS_SOURCE = './status.sample.json';
+async function loadStatus() {
+  statusView.update({
+    devices: { status: 'loading' },
+    sessions: { status: 'loading' },
+    diagnostics: { status: 'loading' },
+    notifications: [],
+  });
+  try {
+    const response = await fetch(STATUS_SOURCE, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`서버 응답 ${response.status}`);
+    const s = await response.json();
+    statusView.update({
+      devices: s.devices,
+      sessions: s.sessions,
+      notifications: s.notifications,
+      diagnostics: s.diagnostics,
+      mode: 'demo',
+    });
+  } catch (error) {
+    const field = { status: 'error', mode: 'disconnected', error: { message: error.message } };
+    statusView.update({ devices: field, sessions: field, notifications: [], diagnostics: field, mode: 'disconnected' });
+  }
+}
+
 // 예제 보안 기록. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const EVENTS_SOURCE = './events.sample.json';
 async function loadEvents() {
@@ -247,4 +276,5 @@ async function loadIdentity() {
 }
 
 loadIdentity();
+loadStatus();
 loadEvents();
