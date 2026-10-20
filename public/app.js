@@ -1,7 +1,8 @@
 // 13단계 호스트 화면 (제공 영역). 학생은 이 파일이 아니라 student/extension.mjs 를 고칩니다.
 // 역할: 세 메뉴(보호 현황·업무 앱·보안 기록)를 마우스와 Tab·Enter 로 오갈 수 있게 하고,
 //       '다시 불러오기'로 신원 데이터를 다시 받아 학생 함수 renderIdentity 에 넘깁니다.
-import { createStudentView } from '../student/extension.mjs';
+// 학생 모듈은 public 안에서 제공됩니다(/student/extension.mjs). 빌드가 student/ 를 복사합니다.
+import { createStudentView } from './student/extension.mjs';
 
 // 예제 신원 데이터. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const IDENTITY_SOURCE = './identity.sample.json';
@@ -43,10 +44,14 @@ function buildPanel(menu) {
     bar.append(reload);
     panel.append(bar, studentView.element);
   } else if (menu.id === 'apps') {
-    panel.append(exampleList('업무 앱(예제)', [
-      '자료실 — 로그인한 계정의 가상 메모',
+    panel.append(exampleList('업무 앱', [
       '백업 복구 — 사본에서 자료 되살리기',
     ]));
+    const link = document.createElement('a');
+    link.href = './vault.html';
+    link.textContent = '자료실 열기 — 로그인한 계정의 가상 메모';
+    link.className = 'app-link';
+    panel.append(link);
   } else {
     panel.append(exampleList('보안 기록(예제)', [
       '등록되지 않은 기기의 접속 시도 거부',

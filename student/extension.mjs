@@ -14,6 +14,8 @@
 // 규칙: document.createElement 와 textContent 만 씁니다. innerHTML 금지.
 //       DOM 요소 하나를 돌려줍니다. 오류일 때 이전 사용자 값이 남지 않도록,
 //       호출부(createStudentView.update)가 노드를 통째로 교체합니다.
+//       한국어 상태 설명 옆에 서버가 준 '원래 상태 코드'도 함께 표시하고,
+//       세션 ID 는 받은 원본을 그대로 보여 줍니다(자르지 않음).
 
 // --- 상태값 → 화면 문구 (의미를 바꾸지 않는 정확한 한국어) ---
 const DEVICE_STATUS_TEXT = {
@@ -36,8 +38,11 @@ const MODE_TEXT = {
   unknown: '확인 불가',
 };
 
-const deviceStatusText = (s) => DEVICE_STATUS_TEXT[s] ?? '확인 불가';
-const sessionStatusText = (s) => SESSION_STATUS_TEXT[s] ?? '확인 불가';
+// 서버가 준 원래 상태 코드. 값이 없으면 계약상 '확인 불가'에 해당하는 unknown 으로 둡니다.
+const statusCode = (s) => (s === undefined || s === null || s === '') ? 'unknown' : String(s);
+// 한국어 설명 옆에 원래 상태 코드를 괄호로 함께 표시합니다. 예: "보안 기준 충족 (compliant)"
+const deviceStatusLabel = (s) => `${DEVICE_STATUS_TEXT[s] ?? '확인 불가'} (${statusCode(s)})`;
+const sessionStatusLabel = (s) => `${SESSION_STATUS_TEXT[s] ?? '확인 불가'} (${statusCode(s)})`;
 const deviceTone = (s) => DEVICE_TONE[s] ?? 'unknown';
 const sessionTone = (s) => SESSION_TONE[s] ?? 'unknown';
 const modeText = (mode) => MODE_TEXT[mode] ?? '';
@@ -109,7 +114,7 @@ function renderMeBlock(me) {
 
   const data = me?.data;
   if (!data) {
-    section.append(row('상태', '확인 불가', 'unknown'));
+    section.append(row('상태', '확인 불가 (unknown)', 'unknown'));
     return section;
   }
   const user = data.user ?? {};
@@ -117,12 +122,15 @@ function renderMeBlock(me) {
   const session = data.session ?? {};
 
   section.append(row('사용자', user.label ?? '확인 불가', user.label ? undefined : 'unknown'));
+  // 서버 ID 원본도 함께 (있을 때)
+  if (user.id) section.append(row('사용자 ID', String(user.id)));
   section.append(row(
     '현재 기기',
-    `${device.label ?? '확인 불가'} — ${deviceStatusText(device.status)}`,
+    `${device.label ?? '확인 불가'} — ${deviceStatusLabel(device.status)}`,
     deviceTone(device.status),
   ));
-  section.append(row('현재 세션', sessionStatusText(session.status), sessionTone(session.status)));
+  section.append(row('현재 세션', sessionStatusLabel(session.status), sessionTone(session.status)));
+  if (session.id) section.append(row('세션 ID', String(session.id)));
   return section;
 }
 
@@ -141,7 +149,7 @@ function renderDevicesBlock(devices) {
     const li = document.createElement('li');
     li.append(row(
       device?.label ?? '확인 불가',
-      deviceStatusText(device?.status),
+      deviceStatusLabel(device?.status),
       deviceTone(device?.status),
     ));
     ul.append(li);
@@ -162,10 +170,10 @@ function renderSessionsBlock(sessions) {
   const ul = document.createElement('ul');
   ul.className = 'identity-list';
   for (const session of list) {
-    const id = String(session?.id ?? '');
-    const shortId = id ? `세션 ${id.slice(-6)}` : '세션';
+    // 세션 ID 는 원본을 그대로 표시합니다(자르지 않음).
+    const id = session?.id === undefined || session?.id === null ? '' : String(session.id);
     const li = document.createElement('li');
-    li.append(row(shortId, sessionStatusText(session?.status), sessionTone(session?.status)));
+    li.append(row(id ? `세션 ${id}` : '세션', sessionStatusLabel(session?.status), sessionTone(session?.status)));
     ul.append(li);
   }
   section.append(ul);

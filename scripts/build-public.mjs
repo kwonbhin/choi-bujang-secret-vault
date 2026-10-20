@@ -7,6 +7,11 @@ const source = resolve(root, 'data.json');
 const output = resolve(root, 'public', 'data.json');
 const config = JSON.parse(await readFile(resolve(root, 'aleph.config.json'), 'utf8'));
 await mkdir(resolve(root, 'public'), { recursive: true });
+// 13단계: 학생 모듈(student/extension.mjs)을 public 안에서 제공되도록 복사합니다.
+// vercel.json은 public만 배포하므로, 이 복사가 /student/extension.mjs 경로를 만듭니다.
+await mkdir(resolve(root, 'public', 'student'), { recursive: true });
+await copyFile(resolve(root, 'student', 'extension.mjs'), resolve(root, 'public', 'student', 'extension.mjs'));
+console.log('학생 모듈을 public/student/extension.mjs로 복사했습니다.');
 if (config.step === 1) {
   const data = JSON.parse(await readFile(source, 'utf8'));
   if (!Array.isArray(data.notes)) {
