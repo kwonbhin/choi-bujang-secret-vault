@@ -1,0 +1,6 @@
+{
+  "vault":   { "appId": "vault",   "decision": "allow",     "reason": "등록 기기에서의 정상 접속" },
+  "backup":  { "appId": "backup",  "decision": "challenge", "reason": "평소와 다른 시각 접속으로 추가 확인이 필요합니다." },
+  "payroll": { "appId": "payroll", "decision": "deny",      "reason": "이 계정에는 결재 앱 접근 권한이 없습니다." },
+  "mail":    { "appId": "mail",    "decision": "unknown",   "reason": "판정 정보를 가져오지 못했습니다." }
+}

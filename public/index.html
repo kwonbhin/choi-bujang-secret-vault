@@ -38,8 +38,15 @@
     .identity-value[data-tone="alert"] { color: #ffb4c0; }
     .identity-list { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
     .identity-list li { border: 1px solid #38506c; border-radius: 10px; padding: 8px 12px; background: #16263a; }
-    .student-identity h2 { font-size: 17px; margin: 0 0 12px; }
-    .app-link { display: inline-block; margin-top: 10px; color: #8ad8df; font-weight: 600; }
+    .student-identity h2, .app-decision h2 { font-size: 17px; margin: 0 0 12px; }
+    .panel-hint { color: #bfd0e5; margin: 0 0 12px; }
+    .app-chooser { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+    .app-choice { font: inherit; padding: 8px 14px; border: 1px solid #51667c; border-radius: 10px; background: #1a2a3d; color: #ecf4ff; cursor: pointer; }
+    .app-choice[aria-pressed="true"] { background: #8ad8df; color: #101a28; border-color: #8ad8df; }
+    .app-choice:focus-visible { outline: 3px solid #8ad8df; outline-offset: 2px; }
+    .app-decision { margin-top: 14px; }
+    .decision { border: 1px solid #38506c; border-radius: 12px; padding: 14px 16px; background: #1a2a3d; }
+    .app-link { display: inline-block; margin-top: 14px; color: #8ad8df; font-weight: 600; }
     .app-link:focus-visible { outline: 3px solid #8ad8df; outline-offset: 2px; }
     [hidden] { display: none !important; }
   </style>

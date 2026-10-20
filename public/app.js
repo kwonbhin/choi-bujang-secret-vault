@@ -2,7 +2,7 @@
 // 역할: 세 메뉴(보호 현황·업무 앱·보안 기록)를 마우스와 Tab·Enter 로 오갈 수 있게 하고,
 //       '다시 불러오기'로 신원 데이터를 다시 받아 학생 함수 renderIdentity 에 넘깁니다.
 // 학생 모듈은 public 안에서 제공됩니다(/student/extension.mjs). 빌드가 student/ 를 복사합니다.
-import { createStudentView } from './student/extension.mjs';
+import { createStudentView, createDecisionView } from './student/extension.mjs';
 
 // 예제 신원 데이터. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const IDENTITY_SOURCE = './identity.sample.json';
@@ -15,6 +15,17 @@ const MENUS = [
 
 const app = document.querySelector('#app');
 const studentView = createStudentView();
+const decisionView = createDecisionView();
+
+// 업무 앱 목록(예제). 접근 요청 시 선택한 앱 하나의 판정을 받습니다.
+const WORK_APPS = [
+  { id: 'vault', label: '자료실' },
+  { id: 'backup', label: '백업 복구' },
+  { id: 'payroll', label: '결재' },
+  { id: 'mail', label: '메일' },
+];
+let selectedApp = WORK_APPS[0].id;
+const appChoiceButtons = [];
 
 // --- 메뉴(탭) + 패널 만들기 ---
 const tablist = document.createElement('div');
@@ -44,14 +55,7 @@ function buildPanel(menu) {
     bar.append(reload);
     panel.append(bar, studentView.element);
   } else if (menu.id === 'apps') {
-    panel.append(exampleList('업무 앱', [
-      '백업 복구 — 사본에서 자료 되살리기',
-    ]));
-    const link = document.createElement('a');
-    link.href = './vault.html';
-    link.textContent = '자료실 열기 — 로그인한 계정의 가상 메모';
-    link.className = 'app-link';
-    panel.append(link);
+    buildAppsPanel(panel);
   } else {
     panel.append(exampleList('보안 기록(예제)', [
       '등록되지 않은 기기의 접속 시도 거부',
@@ -74,6 +78,76 @@ function exampleList(title, items) {
   }
   wrap.append(h, ul);
   return wrap;
+}
+
+// 업무 앱 패널: 앱 선택 → 접근 요청 → 판정을 renderDecision 으로 표시
+function buildAppsPanel(panel) {
+  const h = document.createElement('h2');
+  h.textContent = '업무 앱 접근 요청';
+  panel.append(h);
+
+  const hint = document.createElement('p');
+  hint.className = 'panel-hint';
+  hint.textContent = '앱을 고르면 그 앱 한 개의 접근 판정을 요청합니다.';
+  panel.append(hint);
+
+  const chooser = document.createElement('div');
+  chooser.className = 'app-chooser';
+  chooser.setAttribute('role', 'group');
+  chooser.setAttribute('aria-label', '업무 앱 선택');
+  WORK_APPS.forEach((a) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'app-choice';
+    b.textContent = a.label;
+    b.setAttribute('aria-pressed', a.id === selectedApp ? 'true' : 'false');
+    // 마우스·키보드(Tab→Enter) 모두: 앱을 고르면 바로 그 앱의 판정을 요청합니다.
+    b.addEventListener('click', () => {
+      selectedApp = a.id;
+      appChoiceButtons.forEach((x, i) => x.setAttribute('aria-pressed', WORK_APPS[i].id === selectedApp ? 'true' : 'false'));
+      loadDecision(a.id);
+    });
+    appChoiceButtons.push(b);
+    chooser.append(b);
+  });
+  panel.append(chooser);
+
+  const requestBtn = document.createElement('button');
+  requestBtn.type = 'button';
+  requestBtn.className = 'reload';
+  requestBtn.textContent = '접근 요청';
+  requestBtn.addEventListener('click', () => loadDecision(selectedApp));
+  panel.append(requestBtn);
+
+  panel.append(decisionView.element);
+
+  // 기존 메모 앱(자료실) 바로가기 — 앞 단계 기능 보존
+  const link = document.createElement('a');
+  link.href = './vault.html';
+  link.textContent = '자료실 열기 — 로그인한 계정의 가상 메모';
+  link.className = 'app-link';
+  panel.append(link);
+}
+
+// 예제 판정 자료. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
+const DECISION_SOURCE = './decision.sample.json';
+async function loadDecision(appId) {
+  decisionView.update({ status: 'loading', appId });
+  try {
+    const response = await fetch(DECISION_SOURCE, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`서버 응답 ${response.status}`);
+    const all = await response.json();
+    const entry = all && all[appId];
+    const checkedAt = new Date().toISOString();
+    if (!entry) {
+      // 목록에 없는 앱: 판정 확인 불가
+      decisionView.update({ status: 'ok', mode: 'demo', appId, data: { appId, decision: 'unknown', reason: '판정 정보가 없습니다.', checkedAt } });
+      return;
+    }
+    decisionView.update({ status: 'ok', mode: 'demo', appId, data: { ...entry, appId, checkedAt } });
+  } catch (error) {
+    decisionView.update({ status: 'error', mode: 'disconnected', appId, error: { message: error.message } });
+  }
 }
 
 function selectTab(index) {

@@ -222,3 +222,98 @@ export function createStudentView() {
     },
   };
 }
+
+// ===== 14단계: 업무 앱 접근 판정 표시 (renderDecision) =====
+// 입력: renderDecision({ status, mode, data?, error?, appId })
+//   status: 'idle'(요청 전) · 'loading' · 'ok' · 'error'
+//   data: { appId, decision, reason, checkedAt }
+//   decision: 'allow' · 'deny' · 'challenge' · 'unknown'
+// 규칙: 한국어 뜻 + 원래 코드값 함께 표시. unknown·요청 실패는 허용/정상으로 읽히면 안 됨.
+//       오류(error)는 거부(deny) 판정과 구분. createElement·textContent 만, innerHTML 금지.
+const DECISION_TEXT = {
+  allow: '허용',
+  deny: '거부',
+  challenge: '추가 확인 필요',
+  unknown: '확인 불가',
+};
+const DECISION_TONE = {
+  allow: 'ok',
+  deny: 'warn',
+  challenge: 'warn',
+  unknown: 'unknown',
+};
+const isKnownDecision = (d) => d === 'allow' || d === 'deny' || d === 'challenge';
+const decisionCode = (d) => (d === undefined || d === null || d === '') ? 'unknown' : String(d);
+
+// 과제 핵심: 하나의 DOM 요소를 돌려줍니다.
+export function renderDecision({ status, mode, data, error, appId } = {}) {
+  const root = document.createElement('section');
+  root.className = 'decision';
+  root.dataset.status = status ?? 'idle';
+  root.setAttribute('aria-label', '업무 앱 접근 판정');
+
+  const notice = modeNotice(mode);
+  if (notice) root.append(notice); // 전달된 mode(demo/disconnected/unknown) 안내
+
+  const app = appId ?? data?.appId;
+  if (app) root.append(row('대상 앱', String(app)));
+
+  if (status === undefined || status === 'idle') {
+    root.append(row('안내', '앱을 골라 접속을 요청하세요'));
+    return root;
+  }
+  if (status === 'loading') {
+    root.append(row('상태', '판정 확인 중'));
+    return root;
+  }
+  if (status === 'error') {
+    // 요청 실패: 접근 거부(deny)와 구분하고, 허용/정상으로 읽히지 않게 합니다.
+    const message = error?.message ?? '확인 불가';
+    root.append(row('상태', `요청 실패: ${message}`, 'alert'));
+    root.append(row('구분', '요청이 실패한 것이며, 접근 거부 판정이 아닙니다.', 'alert'));
+    return root;
+  }
+
+  // status === 'ok'
+  const decision = data?.decision;
+  if (isKnownDecision(decision)) {
+    root.append(row('판정', `${DECISION_TEXT[decision]} (${decision})`, DECISION_TONE[decision]));
+    if (decision === 'deny') {
+      root.append(row('구분', '정책상 접근이 허용되지 않았습니다.', 'warn'));
+    }
+    if (decision === 'challenge') {
+      root.append(row('안내', '추가 확인이 필요합니다. 이 앱이 확인 절차를 대신하지 않습니다.', 'warn'));
+    }
+  } else {
+    // unknown 또는 네 값이 아님 → 확인 불가. 허용/정상으로 보이지 않게 합니다.
+    root.append(row('판정', `확인 불가 (${decisionCode(decision)})`, 'unknown'));
+    root.append(row('구분', '판정을 확인할 수 없어 허용되지 않았습니다.', 'unknown'));
+  }
+  if (data?.reason) root.append(row('사유', String(data.reason)));
+  if (data?.checkedAt) root.append(row('판정 시각', String(data.checkedAt)));
+  return root;
+}
+
+// 업무 앱 메뉴에 붙는 학생 화면. update 로 새 입력이 오면 노드를 통째로 교체합니다.
+export function createDecisionView() {
+  const root = document.createElement('div');
+  root.className = 'app-decision';
+
+  const heading = document.createElement('h2');
+  heading.textContent = '업무 앱 접근 판정';
+  root.append(heading);
+
+  const slot = document.createElement('div');
+  slot.className = 'app-decision-slot';
+  slot.setAttribute('aria-live', 'polite');
+  root.append(slot);
+
+  slot.append(renderDecision({ status: 'idle' })); // 처음에는 요청 전 안내
+
+  return {
+    element: root,
+    update(input) {
+      slot.replaceChildren(renderDecision(input ?? {}));
+    },
+  };
+}
