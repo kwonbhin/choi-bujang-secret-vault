@@ -352,12 +352,13 @@ export function renderEvents({ status, mode, data, error } = {}) {
   }
   if (status === 'error') {
     const message = error?.message ?? '확인 불가';
+    // 형식 불일치(error.code === 'CONTRACT_MISMATCH')는 일반 실패와 달리 '기록 확인 불가'로 표시.
+    if (error?.code === 'CONTRACT_MISMATCH') {
+      root.append(row('상태', `기록 확인 불가 (CONTRACT_MISMATCH): ${message}`, 'unknown'));
+      root.append(row('구분', '응답 형식이 맞지 않아 기록을 확인할 수 없습니다. 이전 목록은 지웁니다.', 'unknown'));
+      return root;
+    }
     root.append(row('상태', `기록을 불러오지 못했습니다: ${message}`, 'alert'));
-    return root;
-  }
-  if (status === 'CONTRACT_MISMATCH') {
-    root.append(row('상태', '확인 불가 (CONTRACT_MISMATCH)', 'unknown'));
-    root.append(row('구분', '기록을 확인할 수 없어 이전 목록을 지웠습니다.', 'unknown'));
     return root;
   }
 
