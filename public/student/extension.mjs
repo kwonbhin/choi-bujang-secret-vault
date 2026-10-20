@@ -243,7 +243,6 @@ const DECISION_TONE = {
   unknown: 'unknown',
 };
 const isKnownDecision = (d) => d === 'allow' || d === 'deny' || d === 'challenge';
-const decisionCode = (d) => (d === undefined || d === null || d === '') ? 'unknown' : String(d);
 
 // 과제 핵심: 하나의 DOM 요소를 돌려줍니다.
 export function renderDecision({ status, mode, data, error, appId } = {}) {
@@ -285,8 +284,9 @@ export function renderDecision({ status, mode, data, error, appId } = {}) {
       root.append(row('안내', '추가 확인이 필요합니다. 이 앱이 확인 절차를 대신하지 않습니다.', 'warn'));
     }
   } else {
-    // unknown 또는 네 값이 아님 → 확인 불가. 허용/정상으로 보이지 않게 합니다.
-    root.append(row('판정', `확인 불가 (${decisionCode(decision)})`, 'unknown'));
+    // unknown 또는 네 값이 아님 → 확인 불가. 표시용 코드는 unknown으로 통일합니다.
+    // (목록에 없는 값도 원래 값 대신 unknown으로 보여 허용/정상으로 읽히지 않게 합니다.)
+    root.append(row('판정', '확인 불가 (unknown)', 'unknown'));
     root.append(row('구분', '판정을 확인할 수 없어 허용되지 않았습니다.', 'unknown'));
   }
   if (data?.reason) root.append(row('사유', String(data.reason)));
