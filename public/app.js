@@ -2,7 +2,7 @@
 // 역할: 세 메뉴(보호 현황·업무 앱·보안 기록)를 마우스와 Tab·Enter 로 오갈 수 있게 하고,
 //       '다시 불러오기'로 신원 데이터를 다시 받아 학생 함수 renderIdentity 에 넘깁니다.
 // 학생 모듈은 public 안에서 제공됩니다(/student/extension.mjs). 빌드가 student/ 를 복사합니다.
-import { createStudentView, createDecisionView, createEventsView, createStatusView } from './student/extension.mjs';
+import { createStudentView, createDecisionView, createEventsView, createStatusView, createAiConnectionView } from './student/extension.mjs';
 
 // 예제 신원 데이터. 서버가 없거나 꺼지면 fetch 가 실패해 error 상태가 보입니다.
 const IDENTITY_SOURCE = './identity.sample.json';
@@ -18,6 +18,7 @@ const studentView = createStudentView();
 const decisionView = createDecisionView();
 const eventsView = createEventsView();
 const statusView = createStatusView();
+const aiView = createAiConnectionView();
 
 // 업무 앱 목록(예제). 접근 요청 시 선택한 앱 하나의 판정을 받습니다.
 const WORK_APPS = [
@@ -57,6 +58,7 @@ function buildPanel(menu) {
     reload.addEventListener('click', () => { loadIdentity(); loadStatus(); });
     bar.append(reload);
     panel.append(bar, studentView.element, statusView.element);
+    buildAiControls(panel);
   } else if (menu.id === 'apps') {
     buildAppsPanel(panel);
   } else {
@@ -170,6 +172,61 @@ async function loadDecision(appId) {
   } catch (error) {
     decisionView.update({ status: 'error', mode: 'disconnected', appId, error: { message: error.message } });
   }
+}
+
+// 17단계: AI 연결 영역(제공 화면). 주소·열쇠 입력 없음. 연결 순서 버튼 + 점검/취소/다시 연결.
+// 실제 연결은 운영 측 계정 권한이 준비돼야 되며, 학생 코드는 결과 표시만 합니다.
+let aiCheckToken = 0;
+const AI_SOURCE = './ai-connection.sample.json';
+function aiNote(text) { const n = document.getElementById('ai-note'); if (n) n.textContent = text; }
+async function loadAiConnection() {
+  const my = ++aiCheckToken;
+  aiView.update({ status: 'loading' });
+  try {
+    const response = await fetch(AI_SOURCE, { cache: 'no-store' });
+    if (my !== aiCheckToken) return; // 취소·다른 점검이 끼어들면 늦은 응답 무시
+    if (!response.ok) throw new Error(`서버 응답 ${response.status}`);
+    const payload = await response.json();
+    if (my !== aiCheckToken) return;
+    aiView.update({ status: 'ok', mode: 'demo', data: payload.data, checkedAt: new Date().toISOString(), explanationAccepted: false });
+  } catch (error) {
+    if (my !== aiCheckToken) return;
+    aiView.update({ status: 'error', mode: 'disconnected', error: { code: 'TIMEOUT_NETWORK', message: error.message }, checkedAt: new Date().toISOString() });
+  }
+}
+function cancelAiCheck() {
+  aiCheckToken++; // 진행 중 점검의 늦은 응답을 버립니다.
+  aiView.update({ status: 'error', error: { code: 'CANCELLED', message: '사용자가 점검을 취소했습니다.' }, checkedAt: new Date().toISOString() });
+}
+function resetAiConnection() {
+  aiCheckToken++; // 계정 다시 연결: 이전 점검 결과를 지우고 점검 전으로.
+  aiView.update({ status: 'idle' });
+  aiNote('');
+}
+function buildAiControls(panel) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-controls';
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'reload';
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    return b;
+  };
+  wrap.append(
+    mk('AI 연결 시작', () => aiNote('확인 번호를 승인 페이지와 대조한 뒤 승인하세요. (데모)')),
+    mk('승인 페이지 열기', () => aiNote('포털에서 같은 계정으로 승인한 뒤 「승인했으며 연결 확인」을 누르세요. (데모)')),
+    mk('승인했으며 연결 확인', () => aiNote('승인 확인됨. 이제 「현재 API 연결 점검」을 누르세요. (데모)')),
+    mk('현재 API 연결 점검', () => loadAiConnection()),
+    mk('취소', () => cancelAiCheck()),
+    mk('계정 다시 연결', () => resetAiConnection()),
+  );
+  const note = document.createElement('p');
+  note.className = 'panel-hint';
+  note.id = 'ai-note';
+  note.textContent = '';
+  panel.append(wrap, note, aiView.element);
 }
 
 // 진단 정보는 제공 화면(이 호스트)이 조회해 renderStatus 입력으로 전달합니다.

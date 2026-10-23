@@ -744,3 +744,127 @@ export function createStatusView() {
     },
   };
 }
+
+// ===== 17단계: 앱 내부 AI 연결 상태 표시 (renderAiConnection) + renderExplanation 기초 =====
+// 입력: renderAiConnection({ status, mode, data?, error?, checkedAt, explanationAccepted })
+//   status: idle(점검 전) · loading(점검 중) · ok · error
+//   data: { transportChecked:true, audienceAuthorization:'test'|'verified', modelCount, help }
+// 규칙: 연결 점검과 '사건 설명 실행'을 구분(모델 목록 응답을 설명으로 쓰지 않음).
+//       실패는 안전한 code 로 원인 구분. 화면·복사에 열쇠·원문 오류를 쓰지 않음.
+//       재점검 성공·계정 변경(idle) 뒤 이전 결과를 남기지 않음(호출부가 노드 교체).
+//       자동 재점검 없음 — 사용자가 버튼을 직접 누름. textContent 만.
+const AI_ERROR_GUIDE = {
+  PERMISSION_PENDING: '계정 연결과 앱 권한이 준비 중입니다. 담당자에게 확인을 요청하세요. (내 설정 문제가 아닙니다)',
+  UNVERIFIED: '연결을 확인할 수 없습니다. 담당자에게 계정 연결과 앱 권한을 확인해 달라고 요청하세요.',
+  AUTH: '인증에 실패했습니다. 계정 연결을 다시 확인하고 담당자에게 문의하세요.',
+  FORBIDDEN: '접근이 제한되었습니다. 계정 연결을 다시 확인하고 담당자에게 문의하세요.',
+  QUOTA: '반 사용량·이용 한도에 도달했습니다. 담당자에게 확인을 요청하세요.',
+  OFF_HOURS: '이용 시간이 아닙니다. 이용 시간을 확인하세요.',
+  RATE_LIMIT: '요청이 제한되었습니다. 잠시 뒤 직접 다시 점검하세요.',
+  TIMEOUT_NETWORK: '시간 초과 또는 네트워크 문제입니다. 잠시 뒤 직접 다시 점검하세요.',
+  CANCELLED: '점검을 취소했습니다. 이전 결과는 현재 결과가 아닙니다.',
+  NO_MODEL: '쓸 수 있는 모델이 없습니다. 담당자에게 모델 허용 설정을 요청하세요.',
+};
+const aiErrorGuide = (code) => AI_ERROR_GUIDE[code] ?? '연결을 확인하지 못했습니다. 담당자에게 문의하세요.';
+const AI_RECHECK_HINT = '다시 점검은 「현재 API 연결 점검」 버튼을 직접 누르세요. 자동으로 점검하지 않습니다.';
+
+export function renderAiConnection({ status, mode, data, error, checkedAt, explanationAccepted } = {}) {
+  const root = document.createElement('section');
+  root.className = 'ai-connection';
+  root.dataset.status = status ?? 'idle';
+  root.setAttribute('aria-label', 'AI 연결 점검');
+
+  const notice = modeNotice(mode);
+  if (notice) root.append(notice);
+
+  if (status === undefined || status === 'idle') {
+    root.append(row('상태', 'AI 연결 점검 전'));
+    root.append(row('다시 점검', AI_RECHECK_HINT));
+    return root;
+  }
+  if (status === 'loading') {
+    root.append(row('상태', 'AI 연결 점검 중'));
+    return root;
+  }
+  if (status === 'error') {
+    const code = error?.code ?? 'UNKNOWN';
+    const message = error?.message ?? '확인 불가';
+    root.append(row('상태', 'AI 연결 점검 실패', 'alert'));
+    root.append(row('원인(code)', String(code)));
+    root.append(row('안내', aiErrorGuide(code)));
+    root.append(row('메시지', String(message)));
+    root.append(row('다시 점검', AI_RECHECK_HINT));
+    return root;
+  }
+
+  // status === 'ok'
+  const d = data ?? {};
+  const aud = d.audienceAuthorization;
+  const audLabel = aud === 'verified' ? '앱 권한 확인 후 점검 (verified)'
+    : aud === 'test' ? '시험 연결 점검 (test)'
+    : `확인 불가 (${statusCode(aud)})`;
+  root.append(row('연결 점검', audLabel, aud === 'verified' ? 'ok' : aud === 'test' ? undefined : 'unknown'));
+  root.append(row('전송 점검(transportChecked)', d.transportChecked ? '전송 경로 확인됨' : '확인 불가'));
+  root.append(row('모델 수(modelCount)', String(d.modelCount ?? '확인 불가')));
+  if (checkedAt) root.append(row('점검 시각(checkedAt)', String(checkedAt)));
+  // 연결만 점검했음을 분명히 — 모델 목록 응답은 사건 설명이 아님.
+  root.append(row('사건 설명', explanationAccepted
+    ? '사건 설명이 별도로 실행되었습니다.'
+    : '사건 설명은 아직 실행하지 않았습니다. (연결만 점검)'));
+  return root;
+}
+
+// renderExplanation 기초(18단계에서 넓힘). 입력: { event, explanation, checkedAt }
+// ok 면 바깥 요소에 data-student-explanation-event=event.id, 사건 ID·summary 표시.
+// 실패면 안전한 code·message + 기록은 그대로. 실패 화면에는 위 속성을 붙이지 않음. textContent 만.
+export function renderExplanation({ event, explanation, checkedAt } = {}) {
+  const root = document.createElement('section');
+  root.className = 'explanation';
+  root.setAttribute('aria-label', '사건 설명');
+  const st = explanation?.status;
+
+  if (st === 'ok') {
+    root.dataset.status = 'ok';
+    if (event?.id !== undefined && event?.id !== null) {
+      root.setAttribute('data-student-explanation-event', String(event.id));
+    }
+    root.append(row('사건 ID', String(event?.id ?? '')));
+    root.append(row('설명(summary)', String(explanation?.data?.summary ?? '')));
+    if (checkedAt) root.append(row('점검 시각', String(checkedAt)));
+    return root;
+  }
+
+  // 실패: data-student-explanation-event 를 붙이지 않습니다.
+  root.dataset.status = st ?? 'error';
+  const code = explanation?.error?.code ?? 'UNKNOWN';
+  const message = explanation?.error?.message ?? '확인 불가';
+  root.append(row('상태', '사건 설명을 실행하지 못했습니다', 'alert'));
+  root.append(row('원인(code)', String(code)));
+  root.append(row('메시지', String(message)));
+  root.append(row('안내', '기록은 그대로입니다. 설명만 실행되지 않았습니다.'));
+  return root;
+}
+
+// AI 연결 영역에 붙는 학생 화면. update 로 새 입력이 오면 통째로 교체합니다.
+export function createAiConnectionView() {
+  const root = document.createElement('div');
+  root.className = 'student-ai';
+
+  const heading = document.createElement('h2');
+  heading.textContent = 'AI 연결 점검';
+  root.append(heading);
+
+  const slot = document.createElement('div');
+  slot.className = 'student-ai-slot';
+  slot.setAttribute('aria-live', 'polite');
+  root.append(slot);
+
+  slot.append(renderAiConnection({ status: 'idle' }));
+
+  return {
+    element: root,
+    update(input) {
+      slot.replaceChildren(renderAiConnection(input ?? {}));
+    },
+  };
+}
