@@ -27,7 +27,7 @@
 | 프로그램 | 요구 | 학생 PC에서 확인한 값 |
 |---|---|---|
 | Windows PowerShell | 실행 도구 `tools/start-alekov.ps1` 실행 | Windows PowerShell 사용 **[실제 확인]** |
-| Node.js | 22~24 (수업 기준 24.19.0, `package.json`의 `engines.node`) | v24.19.0으로 추정: 실행 도구는 버전이 다르면 `참고: 지금 Node.js 는 …` 줄을 출력하는데(`tools/start-alekov.ps1` 133행), 2026-10-26 실행 출력에 그 줄이 없었음. `node --version` 결과로 다시 확인 필요 |
+| Node.js | 22~24 (수업 기준 24.19.0, `package.json`의 `engines.node`) | `node --version` → **v24.19.0** **[실제 확인]** (2026-10-26, 22단계 새 폴더 재현) |
 | Git | `git pull`·커밋 | `git pull` 정상 동작 **[실제 확인]** (버전 번호는 미확인) |
 | 브라우저 | PC 브라우저 | 사용함 **[실제 확인]** |
 | npm 패키지 | 외부 의존성 없음(`package.json`에 dependencies 없음) | **[코드 확인]** |
@@ -241,8 +241,8 @@ flowchart LR
 | 19단계 학생 칸 화면 | **미확인** | — |
 | 20단계 설치 패키지 조회 화면, package-lock.json 버전 대조 | **미확인** | — |
 | `-Demo`, `-Background`, `-Port` 실행 | **미확인**(사용하지 않음) | 코드만 읽음 |
-| Node.js 정확한 버전 출력 | **미확인**(출력으로 v24.19.0 추정) | 4-2 출력 |
-| 새 PC·새 폴더에서 처음부터 재현 | **미확인** | — |
+| Node.js 정확한 버전 출력 | **[실제 확인]** v24.19.0 | 22단계 재현 기록 |
+| 같은 PC의 새 폴더에서 처음부터 재현 | **[실제 확인]** 최종 커밋 `4122f41` (다른 PC는 미확인) | [REPRODUCTION_RECORD.md](REPRODUCTION_RECORD.md) 3-4 |
 | Windows 외 환경(macOS·Linux)에서 실행 도구 | **지원 범위 밖·미확인**: 실행 도구는 Windows PowerShell 전용 | `tools/start-alekov.ps1` |
 
 이 표의 "미확인"은 실패가 아니라 확인하지 못했다는 뜻이며, 확인했다고 적지 않았습니다.
