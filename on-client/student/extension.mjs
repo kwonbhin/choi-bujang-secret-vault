@@ -1106,11 +1106,184 @@ export function createAiConnectionView() {
   };
 }
 
+// ===== 19단계: AI 조치 제안과 기존 서버 처리 결과 (renderAction) =====
+// 입력: renderAction({ status, event, actionId, target, receipt, observation, message, confirmationExpiresAt?, error? })
+//   status: idle · loading · prepared · executing · pending · succeeded · denied · failed · unknown · error · expired
+//   target: { id, generation } | null   receipt: { requestId, receiptId, eventId, actionId, status, version, replayed, superseded? } | null
+//   observation: { observedAt, effectApplied } | null
+// 규칙: 제안 · 사람 확인(준비됨·미실행) · 서버 접수(ACK) · 실제 효과 확인을 서로 다른 문장으로 구분합니다.
+//       succeeded 이면서 observation.effectApplied === true(관측 시각·receiptId 있음, 현재 사건·조치와 일치)일 때만 '효과 확인'.
+//       조건이 하나라도 맞지 않으면 결과 불명(unknown)으로 처리합니다. unknown 은 성공·효과 없음으로 단정하지 않습니다.
+//       학생 코드는 버튼·POST 요청·확인 티켓을 만들거나 저장하지 않습니다(제공 화면 버튼 사용).
+//       매 호출마다 새 노드를 만들고 호출부가 통째로 교체 → 새 입력이 오면 이전 대상·요청·결과가 남지 않습니다.
+//       createElement·textContent 만 사용.
+const ACTION_STATUS = {
+  idle: { title: '아직 미실행(idle)', tone: undefined },
+  loading: { title: '조치 준비 또는 결과 조회 중(loading) · 아직 미실행이거나 결과 미확인', tone: undefined },
+  prepared: { title: '준비됨·미실행(prepared)', tone: 'warn' },
+  executing: { title: '서버에 전달 중(executing) · 결과가 아직 없음', tone: 'warn' },
+  pending: { title: '서버 접수·처리 중(pending) · 결과 미확인', tone: 'warn' },
+  succeeded: { title: '효과 확인(succeeded)', tone: 'ok' },
+  denied: { title: '거절(denied)', tone: 'alert' },
+  failed: { title: '실패(failed)', tone: 'alert' },
+  unknown: { title: '결과 불명(unknown)', tone: 'unknown' },
+  expired: { title: '확인 기한 지남(expired)', tone: 'warn' },
+  error: { title: '요청이 처리되지 않음(error)', tone: 'alert' },
+};
+const ACTION_GUIDE = {
+  idle: '조치 제안은 아직 실행되지 않았습니다. AI 설명의 제안에서 제공 화면의 「조치 준비」를 눌러야 준비가 시작됩니다. 현재 기록처럼 연동 시스템이 지원하는 조치가 없으면 「조치 준비」 버튼이 나오지 않으며, 이것이 정상입니다.',
+  loading: '연동 시스템에 확인하는 중입니다. 결과가 확인되기 전까지 실행 완료로 판단하지 마세요.',
+  prepared: '조치를 준비만 했고 아직 실행하지 않았습니다. 아래 사건·조치·실제 대상·확인 기한을 확인한 뒤, 사람이 직접 제공 화면의 「대상과 조치를 확인했으며 집행합니다」를 눌러야 서버에 전달됩니다.',
+  executing: '사람 확인 뒤 서버에 전달하는 중입니다. 서버 결과가 아직 없으므로 완료 아님입니다.',
+  pending: '서버가 요청을 받았습니다(ACK). 접수는 실제 효과가 아니며 완료 아님입니다. 결과는 제공 화면의 「연동 시스템 결과만 재조회」로 직접 확인하세요.',
+  succeeded: '연동 시스템이 실제 효과를 관측했습니다(effectApplied: true). 아래 관측 시각과 receiptId 를 함께 확인하세요.',
+  denied: '연동 시스템이 이 조치를 거절했습니다. 조치는 적용되지 않았습니다.',
+  failed: '연동 시스템이 이 조치 처리에 실패했다고 알렸습니다.',
+  unknown: '결과를 확인할 수 없습니다. 성공으로도, 효과 없음으로도 판단하지 마세요. 다시 집행하지 말고 제공 화면의 「연동 시스템 결과만 재조회」로 결과만 다시 조회하세요.',
+  expired: '사람 확인 기한이 지나 이번 준비로는 집행할 수 없습니다. 현재 사건에서 조치를 다시 준비하세요.',
+  error: '요청이 처리되지 않았습니다. 아래 원인을 확인하세요.',
+};
+const ACTION_CANCEL_NOTE = '「조치 화면 취소」는 화면을 비우는 기능이며, 이미 서버에 전달된 조치 효과를 되돌리지 않습니다.';
+const hasVal = (v) => v !== undefined && v !== null && v !== '';
+
+// succeeded 를 '효과 확인'으로 인정할 수 있는지. 아니면 이유 문자열을 돌려줍니다.
+function actionSuccessProblem({ event, actionId, receipt, observation }) {
+  if (!observation || observation.effectApplied !== true) return '연동 시스템이 실제 효과(effectApplied: true)를 확인하지 않았습니다.';
+  if (!hasVal(observation.observedAt)) return '관측 시각(observedAt)이 없습니다.';
+  if (!receipt || !hasVal(receipt.receiptId)) return 'receiptId 가 없습니다.';
+  return actionBindingProblem({ event, actionId, receipt });
+}
+// 영수증이 현재 사건·조치와 맞는지(다른 사건·조치의 결과를 붙이지 않음)
+function actionBindingProblem({ event, actionId, receipt }) {
+  if (!receipt) return null;
+  if (hasVal(receipt.eventId) && hasVal(event?.id) && receipt.eventId !== event.id) return '영수증의 사건 ID가 현재 사건과 다릅니다.';
+  if (hasVal(receipt.actionId) && hasVal(actionId) && receipt.actionId !== actionId) return '영수증의 조치 ID가 현재 조치와 다릅니다.';
+  return null;
+}
+
+export function renderAction({ status, event, actionId, target, receipt, observation, message, confirmationExpiresAt, error } = {}) {
+  const root = document.createElement('section');
+  root.className = 'action-status';
+  root.setAttribute('aria-label', '조치 요청 상태와 실제 결과');
+
+  let st = Object.hasOwn(ACTION_STATUS, status) ? status : 'unknown';
+  let downgradeReason = null;
+  // 현재 사건·조치와 영수증이 맞지 않으면 결과 불명
+  const binding = actionBindingProblem({ event, actionId, receipt });
+  if (binding && !['idle', 'error', 'expired'].includes(st)) { downgradeReason = binding; st = 'unknown'; }
+  // succeeded 는 조건을 모두 만족할 때만 효과 확인. 아니면 결과 불명
+  if (st === 'succeeded') {
+    const p = actionSuccessProblem({ event, actionId, receipt, observation });
+    if (p) { downgradeReason = p; st = 'unknown'; }
+  }
+  if (!Object.hasOwn(ACTION_STATUS, status)) downgradeReason = `알 수 없는 상태값(${statusCode(status)})입니다.`;
+  root.dataset.status = st;
+
+  const info = ACTION_STATUS[st];
+  root.append(row('상태', info.title, info.tone));
+  if (st !== status && hasVal(status)) root.append(row('받은 상태값', String(status)));
+  if (downgradeReason) root.append(row('결과 불명 이유', downgradeReason, 'unknown'));
+  root.append(row('안내', ACTION_GUIDE[st]));
+
+  // 제공 화면이 준 안내 문구(있을 때). 효과 확인 화면에서는 중복을 피해 생략합니다.
+  if (hasVal(message) && st !== 'succeeded') root.append(row('제공 화면 안내(message)', String(message)));
+
+  // idle 은 이전 사건·대상·요청이 남지 않도록 아무 값도 표시하지 않습니다.
+  if (st === 'idle') {
+    root.append(row('실행 여부', '실행되지 않음'));
+    root.append(row('참고', ACTION_CANCEL_NOTE));
+    return root;
+  }
+
+  // 현재 의도(사건·근거·조치·대상) — 받은 값만 글자로
+  root.append(explainHeading('현재 사건과 조치'));
+  if (hasVal(event?.id)) {
+    root.setAttribute('data-student-action-event', String(event.id));
+    root.append(row('사건 ID(event.id)', String(event.id)));
+  } else {
+    root.append(row('사건 ID(event.id)', '확인 불가', 'unknown'));
+  }
+  const evIds = Array.isArray(event?.evidence) ? event.evidence.map((ev) => ev?.id).filter(hasVal) : [];
+  root.append(row('근거 ID', evIds.length ? evIds.map(String).join(', ') : '없음'));
+  root.append(row('조치(actionId)', hasVal(actionId) ? String(actionId) : '확인 불가', hasVal(actionId) ? undefined : 'unknown'));
+  if (target && typeof target === 'object') {
+    root.append(row('실제 대상(target.id)', hasVal(target.id) ? String(target.id) : '확인 불가'));
+    root.append(row('대상 세대(target.generation)', hasVal(target.generation) ? String(target.generation) : '확인 불가'));
+  } else if (st === 'prepared') {
+    root.append(row('실제 대상', '확인 불가 — 대상을 확인할 수 없으면 집행하지 마세요', 'unknown'));
+  }
+  if (st === 'prepared' || hasVal(confirmationExpiresAt)) {
+    root.append(row('사람 확인 기한(confirmationExpiresAt)', hasVal(confirmationExpiresAt) ? String(confirmationExpiresAt) : '확인 불가',
+      hasVal(confirmationExpiresAt) ? undefined : 'unknown'));
+    if (st === 'prepared') root.append(row('사람 확인', '사람 확인이 필요하며 아직 실행되지 않았습니다', 'warn'));
+  }
+
+  // 요청·영수증
+  if (receipt && typeof receipt === 'object') {
+    root.append(explainHeading('서버 요청·영수증'));
+    if (hasVal(receipt.requestId)) {
+      root.setAttribute('data-student-action-request', String(receipt.requestId));
+      root.append(row('요청 ID(requestId)', String(receipt.requestId)));
+    }
+    root.append(row('영수증 ID(receiptId)', hasVal(receipt.receiptId) ? String(receipt.receiptId) : '확인 불가'));
+    root.append(row('버전(version)', hasVal(receipt.version) ? String(receipt.version) : '확인 불가'));
+    if (hasVal(receipt.status)) root.append(row('서버 상태값(receipt.status)', String(receipt.status)));
+    if (receipt.replayed === true) {
+      root.append(row('중복 방지(replayed)', '같은 요청 ID의 기존 결과를 다시 받은 것입니다. 조치를 한 번 더 실행한 것이 아닙니다.'));
+    }
+    if (receipt.superseded === true) {
+      root.append(row('최신 아님(superseded)', '이전 조회 결과는 최신 결과를 대신하지 않습니다. 결과만 다시 조회하세요.', 'unknown'));
+    }
+  }
+
+  // 실제 효과 관측
+  if (observation && typeof observation === 'object') {
+    root.append(explainHeading('연동 시스템 관측 결과'));
+    root.append(row('관측 시각(observedAt)', hasVal(observation.observedAt) ? String(observation.observedAt) : '확인 불가'));
+    root.append(row('effectApplied', String(observation.effectApplied === true ? true : observation.effectApplied === false ? false : 'unknown')));
+  } else if (['executing', 'pending', 'unknown'].includes(st)) {
+    root.append(row('관측 결과', '아직 관측된 결과가 없습니다.', st === 'unknown' ? 'unknown' : undefined));
+  }
+
+  if (st === 'error' || st === 'expired' || st === 'denied' || st === 'failed' || error) {
+    const code = error?.code;
+    if (hasVal(code)) root.append(row('원인(code)', safeCode(code)));
+    if (hasVal(error?.message) && safeText(error.message)) root.append(row('메시지', String(error.message)));
+  }
+
+  root.append(row('참고', ACTION_CANCEL_NOTE));
+  return root;
+}
+
+// 조치 상태 학생 화면. update 로 새 입력이 오면 통째로 교체합니다(이전 대상·요청·결과 제거).
+export function createActionView() {
+  const root = document.createElement('div');
+  root.className = 'student-action';
+
+  const heading = document.createElement('h2');
+  heading.textContent = '조치 요청 상태와 실제 결과';
+  root.append(heading);
+
+  const slot = document.createElement('div');
+  slot.className = 'student-action-slot';
+  slot.setAttribute('aria-live', 'polite');
+  root.append(slot);
+
+  slot.append(renderAction({ status: 'idle' }));
+
+  return {
+    element: root,
+    update(input) {
+      slot.replaceChildren(renderAction(input ?? {}));
+    },
+  };
+}
+
 // ===== on-client 제공 UI 연결 (ALEPH Workbench) =====
 // 제공 app.js는 createStudentView({ api, onChange })를 호출하고, 각 메서드를
 // studentData(kind)로 불러 DOM 요소(또는 문자열)를 받아 화면에 붙입니다.
 // 여기서는 위에서 구현한 학생 render 함수들을 그대로 묶어 돌려줍니다.
-// renderVulnerabilities·renderAction은 이 프로젝트에서 아직 진행하지 않은 단계라 안내 문구만 반환합니다.
+// renderVulnerabilities는 이 프로젝트에서 아직 진행하지 않은 단계라 안내 문구만 반환합니다.
 export function createStudentView(_context) {
   return {
     renderIdentity: (data) => renderIdentity(data),
@@ -1120,6 +1293,6 @@ export function createStudentView(_context) {
     renderAiConnection: (data) => renderAiConnection(data),
     renderExplanation: (data) => renderExplanation(data),
     renderVulnerabilities: () => '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.',
-    renderAction: () => '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.',
+    renderAction: (data) => renderAction(data),
   };
 }
