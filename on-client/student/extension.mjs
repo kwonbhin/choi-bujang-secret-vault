@@ -1147,17 +1147,26 @@ const ACTION_CANCEL_NOTE = '「조치 화면 취소」는 화면을 비우는 �
 const hasVal = (v) => v !== undefined && v !== null && v !== '';
 
 // succeeded 를 '효과 확인'으로 인정할 수 있는지. 아니면 이유 문자열을 돌려줍니다.
+// 현재 event.id·actionId 와 영수증의 eventId·actionId 가 '모두 존재하고' 서로 같아야 합니다(ID 가 없으면 성공 불가).
 function actionSuccessProblem({ event, actionId, receipt, observation }) {
   if (!observation || observation.effectApplied !== true) return '연동 시스템이 실제 효과(effectApplied: true)를 확인하지 않았습니다.';
   if (!hasVal(observation.observedAt)) return '관측 시각(observedAt)이 없습니다.';
   if (!receipt || !hasVal(receipt.receiptId)) return 'receiptId 가 없습니다.';
-  return actionBindingProblem({ event, actionId, receipt });
+  if (!hasVal(receipt.requestId)) return 'requestId 가 없습니다.';
+  return actionBindingProblem({ event, actionId, receipt, strict: true });
 }
-// 영수증이 현재 사건·조치와 맞는지(다른 사건·조치의 결과를 붙이지 않음)
-function actionBindingProblem({ event, actionId, receipt }) {
+// 현재 의도(사건·조치)와 영수증이 맞는지. 다른 사건·조치의 결과를 붙이지 않습니다.
+//   - 현재 event.id·actionId 가 없으면 무엇에 대한 결과인지 확인할 수 없으므로 문제로 봅니다.
+//   - 영수증에 eventId·actionId 가 있으면 현재 값과 같아야 합니다.
+//   - strict(성공 판정)일 때는 영수증의 두 ID 도 반드시 있어야 합니다.
+function actionBindingProblem({ event, actionId, receipt, strict = false }) {
+  if (!hasVal(event?.id)) return '현재 사건 ID(event.id)가 없어 어느 사건의 결과인지 확인할 수 없습니다.';
+  if (!hasVal(actionId)) return '현재 조치 ID(actionId)가 없어 어느 조치의 결과인지 확인할 수 없습니다.';
   if (!receipt) return null;
-  if (hasVal(receipt.eventId) && hasVal(event?.id) && receipt.eventId !== event.id) return '영수증의 사건 ID가 현재 사건과 다릅니다.';
-  if (hasVal(receipt.actionId) && hasVal(actionId) && receipt.actionId !== actionId) return '영수증의 조치 ID가 현재 조치와 다릅니다.';
+  if (strict && !hasVal(receipt.eventId)) return '영수증에 사건 ID(receipt.eventId)가 없어 현재 사건과 대조할 수 없습니다.';
+  if (strict && !hasVal(receipt.actionId)) return '영수증에 조치 ID(receipt.actionId)가 없어 현재 조치와 대조할 수 없습니다.';
+  if (hasVal(receipt.eventId) && receipt.eventId !== event.id) return '영수증의 사건 ID가 현재 사건과 다릅니다.';
+  if (hasVal(receipt.actionId) && receipt.actionId !== actionId) return '영수증의 조치 ID가 현재 조치와 다릅니다.';
   return null;
 }
 
@@ -1198,7 +1207,7 @@ export function renderAction({ status, event, actionId, target, receipt, observa
   // 현재 의도(사건·근거·조치·대상) — 받은 값만 글자로
   root.append(explainHeading('현재 사건과 조치'));
   if (hasVal(event?.id)) {
-    root.setAttribute('data-student-action-event', String(event.id));
+    if (!downgradeReason) root.setAttribute('data-student-action-event', String(event.id)); // 대조에 문제가 없을 때만
     root.append(row('사건 ID(event.id)', String(event.id)));
   } else {
     root.append(row('사건 ID(event.id)', '확인 불가', 'unknown'));
@@ -1222,7 +1231,7 @@ export function renderAction({ status, event, actionId, target, receipt, observa
   if (receipt && typeof receipt === 'object') {
     root.append(explainHeading('서버 요청·영수증'));
     if (hasVal(receipt.requestId)) {
-      root.setAttribute('data-student-action-request', String(receipt.requestId));
+      if (!downgradeReason) root.setAttribute('data-student-action-request', String(receipt.requestId)); // 대조에 문제가 없을 때만
       root.append(row('요청 ID(requestId)', String(receipt.requestId)));
     }
     root.append(row('영수증 ID(receiptId)', hasVal(receipt.receiptId) ? String(receipt.receiptId) : '확인 불가'));
