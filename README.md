@@ -5,6 +5,17 @@
 - 배포 주소: https://choi-bujang-secret-vault-tqlv.vercel.app
 - 저장소: https://github.com/kwonbhin/choi-bujang-secret-vault
 
+## 4차: 케셰브 보안 Agent 「빈」 (`on-client`, 13~21단계)
+
+1~12단계 자료실과 별도로, 같은 저장소의 `on-client` 폴더에 직원 PC용 보안 Agent 앱을 만들고 있습니다. 실행 절차·구성도·확인 결과의 자세한 내용은 학생 문서 [on-client/docs/STUDENT_RUNBOOK.md](on-client/docs/STUDENT_RUNBOOK.md)에 있습니다.
+
+- **목적**: 직원이 자기 로그인·기기·세션 상태, 업무 앱 접근 판정, 접속 기록·XDR 경보, AI 사건 설명, 조치 요청 상태, 설치 패키지의 알려진 취약점을 한 화면에서 확인합니다. 확인 불가(unknown)·연결 없음·실패를 정상이나 안전으로 표시하지 않는 것이 핵심 규칙입니다.
+- **기능(학생 작성)**: `on-client/student/extension.mjs`의 `renderIdentity`(13)·`renderDecision`(14)·`renderEvents`(15)·`renderStatus`(16)·`renderAiConnection`(17)·`renderExplanation`(18)·`renderAction`(19)·`renderVulnerabilities`(20)입니다.
+- **구성**: 브라우저(`http://127.0.0.1:5189`) → 로컬 앱 서버(`on-client/src/server.mjs`, 제공) → 접근 제어·XDR 시스템(SDP, 담당자 설정이 있을 때만) / ALEPH 포털(계정·AI 앱 승인) / AI 게이트웨이(CLCO) / OSV 취약점 DB로 이어집니다. 화면 틀(`public/`)과 서버(`src/`)는 제공 코드이고, 학생 칸만 학생 코드입니다.
+- **지원 환경과 버전**: Windows PowerShell과 Node.js 22~24(수업 기준 24.19.0)를 씁니다. 시작 틀은 `alekov-client-starter` 0.2.19입니다. 외부 npm 의존성은 없습니다. 실행 도구는 Windows 전용이며, 다른 OS에서는 확인하지 않았습니다.
+- **실행**: `on-client` 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`을 실행한 뒤 브라우저로 `http://127.0.0.1:5189/`를 엽니다. 종료는 그 창에서 `Ctrl+C`입니다.
+- **현재 한계**: SDP 연결 설정이 없어 보안 기록·실제 AI 사건 설명·실제 조치 집행은 확인하지 못했습니다(미확인). 운영자 준비 항목이며, 연결 성공으로 적지 않습니다.
+
 ## 지금 작동하는 기능
 
 - 화면 `/`의 로그인·로그아웃은 서버 함수 `/api/auth/*`를 거쳐 Supabase Auth 이메일·비밀번호로 합니다. 회원가입 화면은 없고, 시험 계정은 Supabase 대시보드에서 만듭니다. 화면 코드에는 Supabase 주소·publishable key·supabase-js가 없습니다.
