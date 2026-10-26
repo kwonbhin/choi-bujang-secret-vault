@@ -15,6 +15,7 @@
 - **지원 환경과 버전**: Windows PowerShell과 Node.js 22~24(수업 기준 24.19.0)를 씁니다. 시작 틀은 `alekov-client-starter` 0.2.19입니다. 외부 npm 의존성은 없습니다. 실행 도구는 Windows 전용이며, 다른 OS에서는 확인하지 않았습니다.
 - **실행**: `on-client` 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`을 실행한 뒤 브라우저로 `http://127.0.0.1:5189/`를 엽니다. 종료는 그 창에서 `Ctrl+C`입니다.
 - **현재 한계**: SDP 연결 설정이 없어 보안 기록·실제 AI 사건 설명·실제 조치 집행은 확인하지 못했습니다(미확인). 운영자 준비 항목이며, 연결 성공으로 적지 않습니다.
+- **버전·재현 기록(22단계)**: 학생 릴리스 `빈-r22`는 **검증 중인 버전**입니다(v1.0 아님). 새 폴더에서 같은 커밋을 받는 절차, 재현 결과, 13~21단계 결과표, 데이터 보존 계획, 지원 범위는 [on-client/docs/REPRODUCTION_RECORD.md](on-client/docs/REPRODUCTION_RECORD.md)에 있습니다.
 
 ## 지금 작동하는 기능
 
