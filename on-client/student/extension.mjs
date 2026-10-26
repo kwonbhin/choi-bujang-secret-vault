@@ -689,14 +689,27 @@ function statusDiagnostics(field) {
     appendCopyButton(sec, field);
     return sec;
   }
+  // 22단계 재현 중 보완: 제공 화면은 「도움정보 불러오기」를 누르기 전까지 status 'idle' 을 넘깁니다.
+  // idle 을 성공 화면처럼 빈 값으로 그리지 않고, 아직 불러오지 않았다는 것을 글로 보여 줍니다.
+  if (field?.status === undefined || field?.status === null || field?.status === 'idle') {
+    sec.append(row('상태', '진단 정보를 아직 불러오지 않았습니다. 필요하면 「도움정보 불러오기」를 직접 누르세요.'));
+    appendCopyButton(sec, field);
+    return sec;
+  }
+  if (field?.status !== 'ok') {
+    sec.append(row('상태', `확인 불가 (${statusCode(field?.status)})`, 'unknown'));
+    appendCopyButton(sec, field);
+    return sec;
+  }
   const d = field?.data ?? {};
+  const val = (v) => (v === undefined || v === null || v === '') ? '확인 불가' : String(v);
   // 안전한 값만 표시합니다(토큰·키 등은 쓰지 않음).
-  sec.append(row('requestId', String(d.requestId ?? '')));
-  sec.append(row('component', String(d.component ?? '')));
-  sec.append(row('version', String(d.version ?? '')));
-  sec.append(row('checkedAt', String(d.checkedAt ?? '')));
-  sec.append(row('engine.mode', String(d.engine?.mode ?? '')));
-  sec.append(row('engine.code', String(d.engine?.code ?? '')));
+  sec.append(row('requestId', val(d.requestId)));
+  sec.append(row('component', val(d.component)));
+  sec.append(row('version', val(d.version)));
+  sec.append(row('checkedAt', val(d.checkedAt)));
+  sec.append(row('engine.mode', val(d.engine?.mode)));
+  sec.append(row('engine.code', val(d.engine?.code)));
   appendCopyButton(sec, field);
   return sec;
 }
