@@ -138,7 +138,9 @@ public static class AlekovVaultNative {
     $acl.SetOwner($ownerSid); $acl.SetAccessRuleProtection($true,$false)
     if ($directory) { $rule = New-Object Security.AccessControl.FileSystemAccessRule($ownerSid,'FullControl','ContainerInherit, ObjectInherit','None','Allow') }
     else { $rule = New-Object Security.AccessControl.FileSystemAccessRule($ownerSid,'FullControl','Allow') }
-    $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl
+    $acl.AddAccessRule($rule)
+    if ($directory) { ([IO.DirectoryInfo]::new($p)).SetAccessControl($acl) }
+    else { ([IO.FileInfo]::new($p)).SetAccessControl($acl) }
     AssertAcl $p
   }
   function OpenOwned([string]$p) {
