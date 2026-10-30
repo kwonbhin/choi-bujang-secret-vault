@@ -50,7 +50,8 @@ const modeText = (mode) => MODE_TEXT[mode] ?? '';
 // 라벨 + 값 한 줄. warn 톤이면 값 끝에 '· 주의'를 텍스트로 붙여 정상과 구별합니다.
 function row(labelText, valueText, tone) {
   const el = document.createElement('p');
-  el.className = 'identity-row';
+  // 마지막 총공세: 제공 CSS 의 .kv(라벨 칸 + 값 칸 격자)를 함께 써서 라벨과 값이 붙어 보이지 않게 합니다.
+  el.className = 'identity-row kv';
 
   const label = document.createElement('span');
   label.className = 'identity-label';
@@ -183,7 +184,9 @@ function renderSessionsBlock(sessions) {
 // 과제 핵심: 하나의 DOM 요소를 돌려줍니다.
 export function renderIdentity({ me, devices, sessions } = {}) {
   const root = document.createElement('section');
-  root.className = 'identity';
+  // 마지막 총공세: 'identity' 는 제공 CSS 에서 90px 좁은 격자라 계정 칸이 한 글자씩 꺾였습니다.
+  // 겹치지 않는 이름으로 바꿔 블록이 위아래로 차례대로 쌓이게 합니다.
+  root.className = 'identity-panel';
   root.setAttribute('aria-label', '내 계정·기기·세션');
   root.append(
     renderMeBlock(me ?? { status: 'unknown' }),
@@ -270,6 +273,7 @@ export function renderDecision({ status, mode, data, error, appId } = {}) {
     const message = error?.message ?? '확인 불가';
     root.append(row('상태', `요청 실패: ${message}`, 'alert'));
     root.append(row('구분', '요청이 실패한 것이며, 접근 거부 판정이 아닙니다.', 'alert'));
+    root.append(row('다음에 할 일', '연결 상태를 확인한 뒤 앱 버튼을 직접 다시 누르세요. 자동으로 다시 요청하지 않습니다.'));
     return root;
   }
 
@@ -290,8 +294,24 @@ export function renderDecision({ status, mode, data, error, appId } = {}) {
     root.append(row('구분', '판정을 확인할 수 없어 허용되지 않았습니다.', 'unknown'));
   }
   if (data?.reason) root.append(row('사유', String(data.reason)));
-  if (data?.checkedAt) root.append(row('판정 시각', String(data.checkedAt)));
+  if (data?.checkedAt) root.append(row('판정 시각', localTimeWithRaw(data.checkedAt)));
+  // 마지막 총공세: 판정 뒤 "그래서 내가 뭘 하면 되는지"를 한 줄로 알려 줍니다.
+  root.append(row('다음에 할 일', DECISION_NEXT[isKnownDecision(decision) ? decision : 'unknown']));
   return root;
+}
+
+const DECISION_NEXT = {
+  allow: '이 앱을 쓰면 됩니다. 허용은 이번 요청 한 번에 대한 판정입니다.',
+  deny: '사유를 확인하세요. 기기 상태 문제라면 「보호 현황」에서 기기 상태를 먼저 확인하세요.',
+  challenge: '안내받은 추가 확인 절차를 마친 뒤 같은 앱을 다시 요청하세요.',
+  unknown: '잠시 뒤 다시 요청하세요. 계속 확인 불가라면 「보호 현황」의 도움정보를 담당자에게 전달하세요.',
+};
+
+// 서버 시각(ISO)을 읽기 쉬운 한국 시각으로 바꾸고, 원래 값도 괄호로 남깁니다.
+function localTimeWithRaw(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return `${d.toLocaleString('ko-KR')} (${String(value)})`;
 }
 
 // 업무 앱 메뉴에 붙는 학생 화면. update 로 새 입력이 오면 노드를 통째로 교체합니다.
@@ -388,7 +408,7 @@ export function renderEvents({ status, mode, data, error } = {}) {
     const wrap = document.createElement('label');
     wrap.className = 'events-filter';
     const span = document.createElement('span');
-    span.textContent = labelText;
+    span.textContent = `${labelText} `;
     const sel = document.createElement('select');
     sel.setAttribute('aria-label', labelText);
     for (const opt of options) {
@@ -407,7 +427,7 @@ export function renderEvents({ status, mode, data, error } = {}) {
   const accessOptions = [{ value: 'all', label: '전체' }, ...accesses.map((a) => ({ value: String(a), label: `${ACCESS_TEXT[a] ?? a} (${a})` }))];
 
   const filters = document.createElement('div');
-  filters.className = 'events-filters';
+  filters.className = 'events-filters row'; // 제공 .row 로 칸 사이 간격
   filters.append(
     makeSelect('기록 종류', kindOptions, (v) => { fKind = v; }),
     makeSelect('업무 앱', appOptions, (v) => { fApp = v; }),
@@ -493,7 +513,7 @@ export function renderEvents({ status, mode, data, error } = {}) {
         const name = (act && typeof act === 'object') ? String(act.id ?? act.action ?? '') : String(act);
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'events-action-btn';
+        btn.className = 'events-action-btn btn';
         btn.disabled = true; // 비활성: 어떤 요청도 보내지 않습니다.
         btn.textContent = `${name} 미지원`;
         btn.setAttribute('aria-label', `${name} 미지원`);
@@ -511,7 +531,7 @@ export function renderEvents({ status, mode, data, error } = {}) {
     listEl.replaceChildren();
     if (!filtered.length) {
       const li = document.createElement('li');
-      li.append(row('안내', '조건에 맞는 기록이 없습니다.'));
+      li.append(row('안내', '조건에 맞는 기록이 없습니다. 위 걸러 보기를 「전체」로 바꿔 보세요.'));
       listEl.append(li);
     } else {
       for (const e of filtered) {
@@ -519,13 +539,13 @@ export function renderEvents({ status, mode, data, error } = {}) {
         li.className = 'events-row';
         li.setAttribute('data-student-event-id', String(e.id));
         li.append(row('사건 ID', String(e.id)));
-        li.append(row('시각', String(e.at ?? '')));
+        li.append(row('시각', e.at ? localTimeWithRaw(e.at) : '확인 불가'));
         li.append(row('종류', kindLabel(e.kind)));
         li.append(row('앱', appLabel(e.appId)));
         li.append(row('요약', String(e.summary ?? '')));
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'events-detail-btn';
+        btn.className = 'events-detail-btn btn';
         btn.textContent = `${e.id} 상세`;
         btn.setAttribute('aria-label', `${e.id} 상세`);
         btn.addEventListener('click', () => { detailId = e.id; redraw(); });
