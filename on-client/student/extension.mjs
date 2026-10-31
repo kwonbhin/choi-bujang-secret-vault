@@ -769,6 +769,7 @@ const pcState = {
   history: [],           // { at, status, summary }
   detailsOpen: false,
   historyOpen: false,
+  trendOpen: false,
   restoreFocus: false,
 };
 
@@ -834,6 +835,28 @@ function pcSummary(items) {
   return { measured, unknown, warn, text: `실측 ${measured}/${items.length} · 확인 불가 ${unknown}개 · 주의 ${warn}개` };
 }
 
+// 직전 조회 대비 추이 (마지막 총공세 2일차, 내가 추가한 기능).
+//  - 재측정하지 않습니다. 이미 받은 조회 기록의 '직전 OK 값'과 현재 값을 비교만 합니다(일반 권한, 중복 조회 없음).
+//  - 현재 값이나 직전 값이 '확인 불가'면 증감을 지어내지 않고 '비교 불가'와 이유를 보여 줍니다.
+function pcCpuPct(c) { return (c?.state === 'ok' && typeof c.usagePercent === 'number') ? c.usagePercent : null; }
+function pcMemPct(m) { return (m?.state === 'ok' && m.totalBytes > 0) ? Math.round((m.usedBytes / m.totalBytes) * 1000) / 10 : null; }
+function pcDiskFreePct(d) { return (d?.state === 'ok' && d.totalBytes > 0) ? Math.round((d.freeBytes / d.totalBytes) * 1000) / 10 : null; }
+
+function pcTrendRows(metrics, prev) {
+  const specs = [
+    { label: 'CPU 사용률', cur: pcCpuPct(metrics?.cpu), prev: typeof prev?.cpu === 'number' ? prev.cpu : null },
+    { label: '메모리 사용량', cur: pcMemPct(metrics?.memory), prev: pcMemPct(prev?.memory) },
+    { label: '디스크 남은 공간', cur: pcDiskFreePct(metrics?.disk), prev: pcDiskFreePct(prev?.disk) },
+  ];
+  return specs.map((s) => {
+    if (s.cur === null) return { label: s.label, text: '비교 불가: 현재 값이 확인 불가입니다.' };
+    if (s.prev === null) return { label: s.label, text: `현재 ${s.cur}% · 비교 불가: 직전 값이 없거나 확인 불가입니다.` };
+    const diff = Math.round((s.cur - s.prev) * 10) / 10;
+    const arrow = diff > 0 ? `▲ +${diff}%p` : diff < 0 ? `▼ ${diff}%p` : '= 변화 없음';
+    return { label: s.label, text: `현재 ${s.cur}% · 직전 ${s.prev}% (${pcTime(prev.at)} 측정) · ${arrow}` };
+  });
+}
+
 async function refreshPc() {
   if (pcState.status === 'loading' || !pcState.api) return; // 진행 중이면 다시 부르지 않음
   pcState.status = 'loading';
@@ -848,7 +871,7 @@ async function refreshPc() {
     pcState.receivedAt = now;
     pcState.error = null;
     pcState.history.unshift({ at: now, status: 'ok', summary: pcSummary(pcItems(res.data.metrics)).text,
-      cpu: res.data.metrics.cpu?.usagePercent, memory: res.data.metrics.memory });
+      cpu: res.data.metrics.cpu?.usagePercent, memory: res.data.metrics.memory, disk: res.data.metrics.disk });
   } else {
     const code = res?.error?.code ?? 'UNKNOWN';
     pcState.status = code === 'NOT_ALLOWED' ? 'not-allowed' : 'error';
@@ -959,6 +982,27 @@ function renderPcCheck() {
   grid.className = 'grid-2';
   for (const item of cards) grid.append(pcCard(item));
   sec.append(grid);
+
+  // 3.5) 직전 조회 대비 추이 (내가 추가한 기능) — 재측정 없이 조회 기록의 직전 OK 값과 비교
+  const trend = document.createElement('details');
+  trend.open = pcState.trendOpen;
+  trend.addEventListener('toggle', () => { pcState.trendOpen = trend.open; });
+  const tsum = document.createElement('summary');
+  tsum.textContent = '직전 조회 대비 추이 (CPU·메모리·디스크)';
+  const tdl = document.createElement('dl');
+  tdl.className = 'kv';
+  if (pcState.status !== 'ok') {
+    pcKv(tdl, '추이', '현재 조회 값이 없어 비교할 수 없습니다. 「내 PC 다시 조회」를 눌러 주세요.');
+  } else {
+    const prevOk = pcState.history.slice(1).find((h2) => h2.status === 'ok');
+    if (!prevOk) pcKv(tdl, '추이', '직전 조회가 없습니다. 한 번 더 조회하면 증감(%p)을 보여 줍니다.');
+    else for (const r of pcTrendRows(pcState.result.metrics, prevOk)) pcKv(tdl, r.label, r.text);
+  }
+  const tnote = document.createElement('p');
+  tnote.className = 'muted';
+  tnote.textContent = '%p 는 직전 조회와의 차이(백분율 포인트)입니다. 화살표는 증감 방향만 뜻하며 좋음·나쁨 판정이 아닙니다.';
+  trend.append(tsum, tdl, tnote);
+  sec.append(trend);
 
   // 4) 상세 근거(펼치기)
   const det = document.createElement('details');
