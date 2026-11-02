@@ -811,6 +811,13 @@ function pcItems(metrics = {}) {
       note: '앱이 설치된 드라이브 하나만 봅니다. 다른 드라이브는 이 값에 들어 있지 않습니다.' });
   } else items.push({ key: 'disk', label: '디스크 남은 공간', value: '확인 불가', tone: 'unknown', measured: false, note: pcReason(disk?.reason) });
 
+  const net = metrics.network;
+  if (net?.state === 'ok' && Number.isInteger(net.interfaceCount) && Number.isInteger(net.ipv4Count)) {
+    items.push({ key: 'network', label: '네트워크 구성', value: `활성 인터페이스 ${net.interfaceCount}개 · IPv4 주소 ${net.ipv4Count}개`,
+      tone: 'ok', measured: true,
+      note: '인터페이스·IP "개수"만 읽습니다(이름·실제 IP 주소는 읽지 않음). 이 개수는 침해·공격 탐지 결과가 아닙니다.' });
+  } else items.push({ key: 'network', label: '네트워크 구성', value: '확인 불가', tone: 'unknown', measured: false, note: pcReason(net?.reason) });
+
   const fw = metrics.firewall;
   if (fw?.state === 'ok' && Array.isArray(fw.profiles)) {
     const off = fw.profiles.filter((p) => p.enabled === false).map((p) => p.name);
@@ -821,10 +828,10 @@ function pcItems(metrics = {}) {
 
   const ev = metrics.events;
   if (ev?.state === 'ok') {
-    items.push({ key: 'events', label: 'Windows 기록(경고·오류)', value: `경고 ${ev.warningCount}건 · 오류 ${ev.errorCount}건`,
+    items.push({ key: 'events', label: 'Windows 기록(System·Application)', value: `경고 ${ev.warningCount}건 · 오류 ${ev.errorCount}건 (최근 24시간, System·Application 합산)`,
       tone: 'ok', measured: true,
-      note: `${ev.since ? pcTime(ev.since) + ' 이후, ' : ''}최대 ${ev.sampleLimit}건까지만 셉니다${ev.truncated ? '(한도에 걸려 일부만 셈)' : ''}. 건수는 침해 판정이 아니고, 기록 내용은 읽지 않습니다.` });
-  } else items.push({ key: 'events', label: 'Windows 기록(경고·오류)', value: '확인 불가', tone: 'unknown', measured: false, note: pcReason(ev?.reason) });
+      note: `${ev.since ? pcTime(ev.since) + ' 이후, ' : ''}최대 ${ev.sampleLimit}건까지만 셉니다${ev.truncated ? '(한도에 걸려 일부만 셈)' : ''}. 이 건수는 침해·공격 탐지 결과가 아니고, 기록 내용은 읽지 않습니다.` });
+  } else items.push({ key: 'events', label: 'Windows 기록(System·Application)', value: '확인 불가', tone: 'unknown', measured: false, note: pcReason(ev?.reason) });
   return items;
 }
 
@@ -923,7 +930,7 @@ function pcCard(item) {
   return card;
 }
 
-function renderPcCheck() {
+function renderPcCheck(sdpMode) {
   const sec = document.createElement('section');
   sec.className = 'card student';
   sec.dataset.field = 'pc-check';
@@ -936,6 +943,14 @@ function renderPcCheck() {
   tag.textContent = '학생 구현';
   h.append(tag);
   sec.append(h);
+
+  // 0) SDP(접근제어) 서버 연결 상태 — 로컬 PC 조회와 '섞지 않게' 따로 표시 (3일차 요청)
+  const sdp = document.createElement('p');
+  sdp.className = 'state state-empty';
+  const SDP_LABEL = { connected: '연결됨', demo: '예제(실제 연결 아님)', disconnected: '미연결' };
+  const sdpText = SDP_LABEL[sdpMode] ?? '확인 불가';
+  sdp.textContent = `SDP(접근제어) 서버: ${sdpText} — 아래 「내 PC 점검」은 이 PC를 로컬에서 읽은 값이며, SDP 서버 연결과는 별개입니다. 로컬 조회가 성공해도 SDP가 연결된 것은 아닙니다.`;
+  sec.append(sdp);
 
   // 1) 핵심 요약 — 한 줄로 지금 상태
   const items = pcState.status === 'ok' ? pcItems(pcState.result.metrics) : null;
@@ -1045,7 +1060,7 @@ export function renderStatus({ devices, sessions, notifications, diagnostics, mo
   const notice = modeNotice(mode);
   if (notice) root.append(notice);
 
-  root.append(renderPcCheck()); // 마지막 총공세: 내 PC 점검 대시보드를 맨 위에
+  root.append(renderPcCheck(mode)); // 마지막 총공세: 내 PC 점검 대시보드를 맨 위에 (SDP 연결 상태=엔진 mode 전달)
   root.append(statusDevices(devices ?? { status: 'unknown' }));
   root.append(statusSessions(sessions ?? { status: 'unknown' }));
   root.append(statusNotifications(notifications));
