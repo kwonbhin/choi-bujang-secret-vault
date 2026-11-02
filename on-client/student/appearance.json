@@ -1,0 +1,10 @@
+{
+  "schema": "alekov.student-appearance.v1",
+  "appName": "빈",
+  "palette": {
+    "accent": "#0e7490",
+    "background": "#f5f6f8",
+    "surface": "#ffffff"
+  },
+  "dashboardPreset": "student-first"
+}

@@ -78,6 +78,18 @@
 
 확인: 문법(`node --check`) 통과, DOM 목 렌더 통과(SDP 미연결 줄·네트워크 카드·System·Application 라벨·2일차 추이 유지 확인). Windows PC에서 방화벽·Windows기록 실측은 학생 PC에서 확인 필요.
 
+## 4일차 — 화면 다듬기(핵심 기능 먼저·꾸밈) (`on-client/student/appearance.json` 신규)
+
+제공 화면(`public/app.js`·`public/style.css`·`src/`)은 건드리지 않고, 제공 꾸밈 방식만 사용했습니다.
+
+- **핵심(학생) 기능 먼저 보이기**: `appearance.json`에 `dashboardPreset: "student-first"` 지정 → 제공 모듈이 `card student` 노드(내 PC 점검 등)를 맨 앞으로 재배치. 제공 화면은 그대로 둠.
+- **앱 이름·색**: `appName: "빈"`, 라이트 팔레트(accent `#0e7490` 틸, background `#f5f6f8`, surface `#ffffff`). 제공 기본 테마와 같은 라이트 계열이라 대비 보정 불필요(`corrected: []`).
+- **다시 조회·대기·실패·키보드**: 내가 추가한 「내 PC 점검」에 이미 구현(버튼 + '조회 중…' 대기, 실패 시 예시 값 대신 전부 '확인 불가'+다음 할 일, `<button>`·`<details>` 키보드 조작, 조회 후 포커스 복귀). 이번 일차에 새로 고치지 않음.
+
+지킨 규칙: 제공 파일 미수정, 제공 화면과 겹치는 기능 새로 만들지 않음, 포장 명령 미실행.
+
+확인: 제공 검증기(`GET /student/appearance.json`)가 `state: "applied"`, `appName: 빈`, `dashboardPreset: student-first`, 색 보정 없음으로 응답. 화면 실제 배치·키보드 흐름은 학생 PC에서 확인 권장.
+
 ## 5일차(일부) — 화면 다듬기와 실행 안내
 
 처음 보는 사람 관찰(4일차) 전에, 화면을 직접 캡처해 보며 눈에 띄는 문제부터 고쳤습니다.
