@@ -4,8 +4,22 @@
 
 ## 준비
 
-- Node.js 22~24 (수업 기준 24.19.0)
-- 이 저장소를 받아 둔 폴더. 이미 있다면 먼저 최신 코드를 받습니다.
+- **Node.js 22~24** (수업 기준 24.19.0). 없으면 https://nodejs.org 에서 설치한 뒤 터미널/PowerShell을 **새로 엽니다**. 확인: `node -v`
+- **Git**. 없으면 https://git-scm.com 에서 설치. 확인: `git --version`
+- 외부 npm 패키지는 없습니다. **`npm install` 을 하지 않아도** 바로 실행됩니다.
+
+### 처음 받는 경우 (저장소가 아직 없을 때)
+
+원하는 폴더에서 저장소를 받습니다. 받으면 `choi-bujang-secret-vault` 폴더가 생깁니다.
+
+```
+git clone https://github.com/kwonbhin/choi-bujang-secret-vault
+cd choi-bujang-secret-vault
+```
+
+### 이미 받아 둔 경우
+
+그 `choi-bujang-secret-vault` 폴더로 이동해 최신 코드를 받습니다.
 
 ```
 git pull
@@ -43,6 +57,17 @@ npm run demo       # 예제 화면
 | 보호 현황 | 맨 아래 학생 칸의 「내 PC 점검」 → 「내 PC 다시 조회」. 요약 한 줄, 상태 카드, 근거와 한계, 조회 기록 |
 | 업무 앱 | 앱 하나를 눌러 판정(허용·거부·추가 확인·확인 불가)과 「다음에 할 일」 확인 |
 | 보안 기록 | 걸러 보기, 기록 상세, AI 설명 요청 |
+
+## 막힐 때 (처음 보는 사람이 자주 겪는 것)
+
+| 증상 | 원인 | 할 일 |
+|---|---|---|
+| `git: command not found` 또는 `git pull`이 안 됨 | Git이 없거나 저장소를 아직 안 받음 | Git 설치 후 위 「처음 받는 경우」의 `git clone`부터 |
+| `node: command not found` 또는 `지금 Node.js 는 …` | Node 없음·버전 밖(22~24 아님) | Node.js 22~24 설치 후 창을 **새로 열고** 다시 |
+| 브라우저에 `ERR_CONNECTION_REFUSED`("연결 거부") | 서버가 안 켜졌거나 실행 창을 닫음 | 실행 창을 **켜 둔 채로** `http://127.0.0.1:5189/` 새로고침. 창이 꺼졌으면 실행 명령을 다시 |
+| `포트 5189 를 다른 프로그램이 쓰고 있습니다` | 5189를 다른 프로그램이 사용 중 | Windows: 명령 끝에 `-Port 5190` · Mac: `ON_PORT=5190 npm start`. 브라우저도 `:5190`으로 |
+| PowerShell이 스크립트를 막음 | 실행 정책 | 명령에 이미 `-ExecutionPolicy Bypass`가 있음(이번 실행만 적용). 그래도 막히면 차단 문구를 담당자에게 전달 |
+| ZIP 안에서 실행이 안 됨 | 압축 상태로는 실행 불가 | 받은 **저장소 폴더**(starter ZIP 아님)의 `on-client`에서 실행 |
 
 ## 알아 둘 것
 

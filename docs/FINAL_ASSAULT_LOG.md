@@ -104,3 +104,11 @@
 
 - 실행 안내 `docs/FINAL_RUN_GUIDE.md` 작성(Windows·Mac 실행 방법, 화면에서 볼 것, 주의할 점).
 - 확인: Linux 예제 실행에서 세 메뉴 화면 캡처, 화면 폭 390px에서 가로 스크롤 없음, 페이지 오류 없음.
+
+### 5일차 추가 — 처음 보는 사람용 실행 안내 보완
+
+다른 사람이 안내만 보고 따라 하다 막히는 지점을 점검했습니다. 원인은 코드가 아니라 안내였습니다(앱은 외부 의존성 0으로 깨끗한 폴더에서 설치 없이 바로 실행됨 — 확인함). 두 안내가 "저장소를 이미 받은 상태"에서 시작해, 저장소가 없는 사람은 첫 줄 `git pull`에서 막혔습니다.
+
+- `docs/FINAL_RUN_GUIDE.md`: 「처음 받는 경우(`git clone`)」 단계 추가, Node/Git 설치·버전 확인(`node -v`, `git --version`), `npm install` 불필요 명시, 「막힐 때」 표(git/node 없음, 연결 거부, 포트 5189 사용 중, 실행 정책, ZIP 실행) 추가.
+- `on-client/docs/STUDENT_RUNBOOK.md` §4-1: 처음 받는 사람용 `git clone` 한 줄 추가.
+- 제공 파일·학생 코드는 수정하지 않음(안내 문서만). 확인: 깨끗한 on-client 폴더를 `node src/server.mjs --demo`로 실행 → HTTP 200(설치 단계 없이 기동).

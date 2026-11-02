@@ -63,6 +63,8 @@ C:\Users\Administrator\Documents\choi-bujang-secret-vault\   ← Git 최상위 (
 
 ### 4-1. 최신 코드 받기
 
+> **처음 받는 사람(저장소가 아직 없을 때)**: 먼저 원하는 폴더에서 `git clone https://github.com/kwonbhin/choi-bujang-secret-vault` 를 실행해 저장소를 받습니다. 받으면 `choi-bujang-secret-vault` 폴더가 생기고, 그 안에서 아래 순서를 따릅니다. (이미 받아 둔 사람은 바로 아래부터.)
+
 1. 파일 탐색기에서 `choi-bujang-secret-vault` 폴더를 엽니다.
 2. 주소 표시줄에 `powershell`을 입력하고 Enter를 누릅니다.
 3. 아래를 실행합니다.
